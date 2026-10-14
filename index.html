@@ -6,7 +6,8 @@
 <title>イジンデン一人回し</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/vs.css">
 </head>
 <body>
 
@@ -21,6 +22,7 @@
   <nav class="tabs" id="mainTabs">
     <button class="tab-btn is-active" data-tab="builder">デッキ構築</button>
     <button class="tab-btn" data-tab="solo">ソロプレイ</button>
+<button class="tab-btn" data-tab="vs">CPU対戦</button>
   </nav>
 </header>
 
@@ -68,6 +70,11 @@
         <div class="field">
           <label>収録弾</label>
           <div class="chip-group" id="fSet"></div>
+        </div>
+
+        <div class="field">
+          <label>特性</label>
+          <div class="chip-group" id="fTrait"></div>
         </div>
 
         <div class="field">
@@ -148,6 +155,7 @@
     <div class="board" id="boardPanel" style="display:none;">
 
       <div class="board-topbar">
+        <div class="topbar-main">
         <div class="seal-stamp" id="phaseStamp">
           <span class="seal-turn" id="stampTurn">1</span>
           <span class="seal-phase" id="stampPhase">スタート</span>
@@ -156,11 +164,19 @@
           <div class="counter"><span class="counter-label">マリョク配置権</span><span class="counter-value" id="cntMana">1</span></div>
           <div class="counter"><span class="counter-label">イジン召喚権</span><span class="counter-value" id="cntSummon">1</span></div>
           <div class="counter"><span class="counter-label">山札</span><span class="counter-value" id="cntDeck">0</span></div>
+		  <div class="counter"><span class="counter-label">ドロー(済/上限)</span><span class="counter-value" id="cntDraw">0/0</span></div>
         </div>
         <div class="board-actions">
+		  <button class="btn btn-ghost" id="btnUndo" disabled>↩ 一つ戻る</button>
           <button class="btn btn-ghost" id="btnDrawExtra">1枚引く</button>
           <button class="btn btn-primary" id="btnAdvancePhase">次のフェイズへ</button>
           <button class="btn btn-danger" id="btnEndGame">対戦終了</button>
+        </div>
+        </div>
+
+        <div class="log-panel">
+          <h3 class="zone-title">ログ</h3>
+          <div class="log-list" id="logList"></div>
         </div>
       </div>
 
@@ -189,13 +205,27 @@
 
       </div>
 
-      <div class="log-panel">
-        <h3 class="zone-title">ログ</h3>
-        <div class="log-list" id="logList"></div>
-      </div>
     </div>
   </section>
-
+  <!-- ============ CPU PLAY ============ -->
+<section id="tab-vs" class="tab-panel">
+  <div class="panel setup-panel" id="vsSetupPanel">
+    <h2 class="panel-title">CPU対戦の準備</h2>
+    <div class="field"><label>あなたのデッキ</label><select id="vsMyDeck"></select></div>
+    <div class="field"><label>CPUのデッキ</label><select id="vsCpuDeck"></select></div>
+    <div class="field">
+      <label>先攻 / 後攻</label>
+      <div class="chip-group" id="vsFirst">
+        <button class="chip-toggle is-active" data-val="first">先攻</button>
+        <button class="chip-toggle" data-val="second">後攻</button>
+        <button class="chip-toggle" data-val="random">ランダム</button>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-block" id="vsStart">対戦開始</button>
+    <p class="hint-text">CPUは合法手をランダムに選びます。カード効果は自動処理されないので、手動調整メニューやカード詳細を見ながら進めてください。</p>
+  </div>
+  <div class="board" id="vsBoard" style="display:none;"></div>
+</section>
 </main>
 
 <!-- Card detail modal -->
@@ -206,7 +236,12 @@
 <!-- Action menu popover (for hand/field/mana cards in solo play) -->
 <div class="action-menu" id="actionMenu"></div>
 
-<script src="cards-data.js"></script>
-<script src="app.js"></script>
+<script src="js/cards-data.js"></script>
+<script src="js/preset-decks.js"></script>
+<script src="js/summon-rules.js"></script>
+<script src="js/glossary.js"></script>
+<script src="js/app.js"></script>
+<script src="js/vs-engine.js"></script>
+<script src="js/vs-ui.js"></script>
 </body>
 </html>
