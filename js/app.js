@@ -7,6 +7,31 @@ const CARDS = window.IJINDEN_CARDS || [];
 const CARDS_BY_ID = {};
 CARDS.forEach(c => { CARDS_BY_ID[c.id] = c; });
 
+/* ---------------- 再録・イラスト違いのまとめ ----------------
+   名前・種類・色・レベル・パワーが同じカードは「同じカードの別収録」とみなして1つにまとめる
+   （ブルーオーブの第1弾と第5弾、PSRなど）。色やレベルが違うもの（ヒエロスガモス5種など）は別カードのまま。
+   まとめた代表は、新しい弾（テキストが新しい表記）を優先する。デッキ内のIDも代表のIDにそろえる */
+const SET_ORDER = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
+const PRINT_GROUPS = {};      // groupKey -> [card]
+const GROUP_KEY_OF = {};      // id -> groupKey
+const CANON_ID = {};          // id -> 代表のid
+CARDS.forEach(c => {
+  const k = [c.name, c.type, c.color, c.level, c.power].join('|');
+  GROUP_KEY_OF[c.id] = k;
+  (PRINT_GROUPS[k] = PRINT_GROUPS[k] || []).push(c);
+});
+Object.values(PRINT_GROUPS).forEach(list => {
+  const score = c => SET_ORDER.indexOf(c.set) * 10 + (c.rarity === 'PSR' ? 0 : 5);
+  const rep = list.slice().sort((a, b) => score(b) - score(a))[0];
+  list.forEach(c => { CANON_ID[c.id] = rep.id; });
+});
+const canonId = id => CANON_ID[id] || id;
+function canonDraft(cards) {
+  const out = {};
+  Object.keys(cards || {}).forEach(id => { const k = canonId(id); out[k] = (out[k] || 0) + cards[id]; });
+  return out;
+}
+
 const COLOR_HEX = { '赤': '#b6423a', '青': '#2f8fd6', '緑': '#4a7f4f', '黄': '#c99a2e', '紫': '#5c3d8a', '無': '#7d8394' };
 const BASE_COLORS = ['赤', '青', '緑', '黄', '紫', '無'];
 const PHASE_LABEL = { start: 'スタート', draw: 'ドロー', main: 'メイン', end: 'エンド' };
@@ -49,6 +74,8 @@ function renderRuleTextNode(text) {
     if (m.index > lastIndex) frag.appendChild(document.createTextNode(text.slice(lastIndex, m.index)));
     const strong = document.createElement('strong');
     strong.textContent = m[0];
+    const tip = (typeof IjindenGlossary !== 'undefined') ? IjindenGlossary.descOf(m[0]) : '';
+    if (tip) { strong.title = tip; strong.className = 'kw-term'; }
     frag.appendChild(strong);
     lastIndex = m.index + m[0].length;
     if (m[0].length === 0) KEYWORD_REGEX.lastIndex++;
@@ -81,6 +108,44 @@ function saveDecks(obj) {
   localStorage.setItem('ijinden_decks_v1', JSON.stringify(obj));
 }
 
+/* ---------------- プリセットデッキ（preset-decks.js） ---------------- */
+const PRESET_PREFIX = '★';
+const PRESET_DECKS = (window.IJINDEN_PRESET_DECKS || []).map(d => ({
+  key: PRESET_PREFIX + d.name, name: d.name, series: d.series || '',
+  cards: Object.fromEntries(Object.entries(d.cards).filter(([id]) => {
+    const ok = !!(typeof CARDS_BY_ID !== 'undefined' && CARDS_BY_ID[id]);
+    if (!ok) console.warn(`プリセット「${d.name}」: 未知のカードID ${id} を無視しました`);
+    return ok;
+  }))
+}));
+const PRESET_BY_KEY = Object.fromEntries(PRESET_DECKS.map(d => [d.key, { cards: d.cards, preset: true, name: d.name }]));
+// 保存済みデッキ or プリセットを、キー(デッキ名 / ★名前)から取得
+function getDeckByKey(key) {
+  const d = (state.decks && state.decks[key]) || PRESET_BY_KEY[key] || null;
+  return d ? Object.assign({}, d, { cards: canonDraft(d.cards) }) : null;   // 再録カードは代表のIDにそろえて返す
+}
+// <select> に「保存済み」「プリセット」の順で選択肢を詰める（count=枚数表示）
+function fillDeckOptions(sel, withCount) {
+  const mk = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; return o; };
+  const cnt = d => withCount ? ` (${Object.values(d.cards).reduce((a, b) => a + b, 0)}枚)` : '';
+  const names = Object.keys(state.decks).sort();
+  if (names.length) {
+    const g = document.createElement('optgroup'); g.label = '保存済みデッキ';
+    names.forEach(n => g.appendChild(mk(n, n + cnt(state.decks[n]))));
+    sel.appendChild(g);
+  }
+  if (PRESET_DECKS.length) {
+    // 弾（series）ごとにグループ分け。並びは preset-decks.js の順
+    const groups = new Map();
+    PRESET_DECKS.forEach(d => { const k = d.series || 'その他'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); });
+    groups.forEach((list, k) => {
+      const g = document.createElement('optgroup'); g.label = `プリセット：${k}`;
+      list.forEach(d => g.appendChild(mk(d.key, `${PRESET_PREFIX}${d.name}` + cnt(d))));
+      sel.appendChild(g);
+    });
+  }
+}
+
 /* ---------------- Global state ---------------- */
 const state = {
   filters: {
@@ -89,6 +154,7 @@ const state = {
     colors: new Set(),
     sets: new Set(),
     rarities: new Set(),
+    traits: new Set(),
     levelMin: null,
     levelMax: null
   },
@@ -102,6 +168,45 @@ let uidCounter = 1;
 let activeMenuInstance = null;
 
 /* ============================================================
+   UNDO function
+   ============================================================ */
+const undoStack = [];
+
+function updateUndoButton() {
+  const b = document.getElementById('btnUndo');
+  if (b) b.disabled = undoStack.length === 0;
+}
+
+// 操作を実行し、盤面(ログ以外)が変わったときだけ履歴に積む
+function runUndoable(fn) {
+  if (!GAME) return;
+  const beforeFull = JSON.stringify(GAME);
+  const beforeState = JSON.stringify({ ...GAME, log: null });
+  fn();
+  if (!GAME) return;
+  if (JSON.stringify({ ...GAME, log: null }) !== beforeState) {
+    undoStack.push(beforeFull);
+    if (undoStack.length > 100) undoStack.shift();
+  }
+  updateUndoButton();
+}
+
+function undo() {
+  if (!GAME || undoStack.length === 0) return;
+  GAME = JSON.parse(undoStack.pop());
+  log('↩ 一つ前の状態に戻しました');
+  renderBoard();
+  updateUndoButton();
+}
+
+document.getElementById('btnUndo').addEventListener('click', undo);
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && GAME && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+    e.preventDefault(); undo();
+  }
+});
+
+/* ============================================================
    TAB SWITCHING
    ============================================================ */
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -110,7 +215,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('is-active'));
     btn.classList.add('is-active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('is-active');
-    if (btn.dataset.tab === 'solo') refreshSoloDeckSelect();
+    if (btn.dataset.tab === 'solo') { refreshSoloDeckSelect(); scrollLogToEnd(document.getElementById('logList')); }
   });
 });
 
@@ -154,6 +259,9 @@ function initFilterUI() {
 
   const rarities = [...new Set(CARDS.map(c => c.rarity || 'ー'))];
   setUpChipGroup(document.getElementById('fRarity'), rarities, state.filters.rarities, r => r);
+  // 特性（「特性：剣術」「特性：剣術　志願」など。全角/半角コロン・複数特性に対応）
+  const traits = [...new Set(CARDS.flatMap(cardTraits))].sort((a, b) => a.localeCompare(b, 'ja'));
+  setUpChipGroup(document.getElementById('fTrait'), traits, state.filters.traits, t => t);
 
   document.getElementById('fSearch').addEventListener('input', e => {
     state.filters.search = e.target.value.trim();
@@ -176,12 +284,13 @@ function initFilterUI() {
     state.filters.colors.clear();
     state.filters.sets.clear();
     state.filters.rarities.clear();
+    state.filters.traits.clear();
     state.filters.levelMin = null;
     state.filters.levelMax = null;
     document.getElementById('fSearch').value = '';
     document.getElementById('fLevelMin').value = '';
     document.getElementById('fLevelMax').value = '';
-    document.querySelectorAll('#fColor .chip-toggle, #fSet .chip-toggle, #fRarity .chip-toggle')
+    document.querySelectorAll('#fColor .chip-toggle, #fSet .chip-toggle, #fRarity .chip-toggle, #fTrait .chip-toggle')
       .forEach(b => b.classList.remove('is-active'));
     renderCardGrid();
   });
@@ -190,6 +299,14 @@ function initFilterUI() {
 /* ============================================================
    DECK BUILDER: FILTER / SORT LOGIC
    ============================================================ */
+/* カードの特性の一覧（trait欄の「特性：剣術　志願」から ['剣術','志願'] を取り出す） */
+function cardTraits(card) {
+  const t = String(card.trait || '');
+  const m = t.match(/特性\s*[:：]\s*(.+)$/);
+  if (!m) return [];
+  return m[1].split(/[\s\u3000・、,]+/).map(x => x.replace(/[「」『』]/g, '').trim()).filter(Boolean);
+}
+
 function matchesSearch(card, q) {
   if (!q) return true;
   const hay = [card.name, card.rule_text, card.legacy_ability, card.trait].filter(Boolean).join(' ').toLowerCase();
@@ -198,7 +315,11 @@ function matchesSearch(card, q) {
 
 function filterCards() {
   const f = state.filters;
-  return CARDS.filter(c => {
+  const seen = new Set();
+  return CARDS.filter(c => matchesFilters(c, f)).map(c => CARDS_BY_ID[canonId(c.id)]).filter(c => (seen.has(c.id) ? false : (seen.add(c.id), true)));
+}
+function matchesFilters(c, f) {
+  {
     if (f.types.size > 0 && !f.types.has(c.type)) return false;
     if (f.colors.size > 0) {
       let ok = false;
@@ -210,11 +331,12 @@ function filterCards() {
     }
     if (f.sets.size > 0 && !f.sets.has(c.set)) return false;
     if (f.rarities.size > 0 && !f.rarities.has(c.rarity || 'ー')) return false;
+    if (f.traits.size > 0 && !cardTraits(c).some(t => f.traits.has(t))) return false;
     if (f.levelMin !== null && c.level < f.levelMin) return false;
     if (f.levelMax !== null && c.level > f.levelMax) return false;
     if (!matchesSearch(c, f.search)) return false;
     return true;
-  });
+  }
 }
 
 function sortCards(list) {
@@ -340,6 +462,26 @@ function appendCardFace(container, card, { includeSource = false } = {}) {
     container.appendChild(ruleEl);
   }
 
+  // 能力名の注記（ルールテキストと遺業能力に出てくる用語の説明）
+  if (typeof IjindenGlossary !== 'undefined') {
+    const seen = new Set();
+    const hits = IjindenGlossary.find(card.rule_text).concat(IjindenGlossary.find(card.legacy_ability, { legacy: true }))
+      .filter(h => !seen.has(h.term) && seen.add(h.term));
+    if (hits.length) {
+      const nb = document.createElement('div');
+      nb.className = 'kw-notes';
+      hits.forEach(h => {
+        const line = document.createElement('div');
+        line.className = 'kw-note';
+        const b = document.createElement('b'); b.textContent = h.term;
+        line.appendChild(b);
+        line.appendChild(document.createTextNode(' ' + h.desc));
+        nb.appendChild(line);
+      });
+      container.appendChild(nb);
+    }
+  }
+
   const subRow = document.createElement('div');
   subRow.className = 'card-sub-row';
   const legacyEl = document.createElement('span');
@@ -381,7 +523,11 @@ function renderCardGrid() {
 
     const sourceEl = document.createElement('span');
     sourceEl.className = 'card-source';
-    sourceEl.textContent = `${card.set}　${card.rarity || ''}`;
+    // 収録：まとめた再録も並べて表示（例：1st R / 5th N）。同名で別カードがあるときはNo.も添える
+    const prints = PRINT_GROUPS[GROUP_KEY_OF[card.id]] || [card];
+    const sameNameGroups = new Set(CARDS.filter(x => x.name === card.name).map(x => GROUP_KEY_OF[x.id])).size;
+    sourceEl.textContent = prints.map(p => `${p.set} ${p.rarity || ''}`.trim()).join(' / ') + (sameNameGroups > 1 ? `　No.${card.no}` : '');
+    sourceEl.title = prints.map(p => `${p.set} ${p.no} ${p.rarity || ''}`).join(' / ');
     footer.appendChild(sourceEl);
 
     const rightWrap = document.createElement('span');
@@ -416,10 +562,13 @@ function renderCardGrid() {
    DECK BUILDER: DRAFT MANAGEMENT
    ============================================================ */
 function addCardToDraft(cardId) {
-  const card = CARDS_BY_ID[cardId];
+  const card = CARDS_BY_ID[canonId(cardId)];
   const unlimited = UNLIMITED_RE.test(card.rule_text || '');
+  cardId = canonId(cardId);
+  // 「同名カードは4枚まで」：収録違い・色違いも名前が同じなら合算する
   const cur = state.draft[cardId] || 0;
-  if (!unlimited && cur >= 4) {
+  const sameName = Object.keys(state.draft).filter(id => CARDS_BY_ID[id] && CARDS_BY_ID[id].name === card.name).reduce((n, id) => n + state.draft[id], 0);
+  if (!unlimited && sameName >= 4) {
     flashDeckStatus('同名カードは4枚までです（' + card.name + '）');
     return;
   }
@@ -529,12 +678,10 @@ function renderDeckPanel() {
    ============================================================ */
 function refreshSavedDeckSelect() {
   const sel = document.getElementById('savedDeckSelect');
+  const prev = sel.value;
   sel.innerHTML = '';
-  Object.keys(state.decks).sort().forEach(name => {
-    const opt = document.createElement('option');
-    opt.value = name; opt.textContent = name;
-    sel.appendChild(opt);
-  });
+  fillDeckOptions(sel, true);
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
   refreshSoloDeckSelect();
 }
 
@@ -543,11 +690,7 @@ function refreshSoloDeckSelect() {
   if (!sel) return;
   const prev = sel.value;
   sel.innerHTML = '';
-  Object.keys(state.decks).sort().forEach(name => {
-    const opt = document.createElement('option');
-    opt.value = name; opt.textContent = name + ` (${totalCount(state.decks[name].cards)}枚)`;
-    sel.appendChild(opt);
-  });
+  fillDeckOptions(sel, true);
   if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
@@ -574,15 +717,19 @@ document.getElementById('btnNewDeck').addEventListener('click', () => {
 
 document.getElementById('btnLoadDeck').addEventListener('click', () => {
   const name = document.getElementById('savedDeckSelect').value;
-  if (!name || !state.decks[name]) return;
-  state.draft = { ...state.decks[name].cards };
-  document.getElementById('deckNameInput').value = name;
+  const d = getDeckByKey(name);
+  if (!d) return;
+  state.draft = canonDraft(d.cards);
+  // プリセットは上書きできないので、★を外した名前で自分用のコピーとして編集できるようにする
+  document.getElementById('deckNameInput').value = d.preset ? d.name : name;
+  if (d.preset) flashDeckStatus(`プリセット「${d.name}」を読み込みました（保存すると自分用のコピーになります）`);
   renderDeckPanel();
   renderCardGrid();
 });
 
 document.getElementById('btnDeleteDeck').addEventListener('click', () => {
   const name = document.getElementById('savedDeckSelect').value;
+  if (name && PRESET_BY_KEY[name]) { alert('プリセットデッキは削除できません（読み取り専用です）'); return; }
   if (!name || !state.decks[name]) return;
   if (!confirm(`「${name}」を削除しますか？`)) return;
   delete state.decks[name];
@@ -616,7 +763,7 @@ document.getElementById('btnImportDeck').addEventListener('click', () => {
         if (CARDS_BY_ID[id]) newDraft[id] = (newDraft[id] || 0) + count;
       }
     });
-    state.draft = newDraft;
+    state.draft = canonDraft(newDraft);
     renderDeckPanel();
     renderCardGrid();
   });
@@ -703,11 +850,12 @@ function shuffle(arr) {
 
 document.getElementById('btnStartGame').addEventListener('click', () => {
   const deckName = document.getElementById('soloDeckSelect').value;
-  if (!deckName || !state.decks[deckName]) { alert('デッキを選択してください'); return; }
+  const deckObj = getDeckByKey(deckName);
+  if (!deckName || !deckObj) { alert('デッキを選択してください'); return; }
   const isFirst = document.querySelector('#fFirst .chip-toggle.is-active').dataset.val === 'first';
 
   const pool = [];
-  const deckDef = state.decks[deckName].cards;
+  const deckDef = deckObj.cards;
   Object.keys(deckDef).forEach(id => { for (let i = 0; i < deckDef[id]; i++) pool.push(id); });
 
   let deck = shuffle(pool);
@@ -720,7 +868,8 @@ document.getElementById('btnStartGame').addEventListener('click', () => {
     graveyard: [],
     mana: [],
     field: [],
-    resources: { manaPlace: 1, summon: 1 },
+    //resources: { manaPlace: 1, summon: 1 },
+	resources: { manaPlace: 1, summon: 1, drawn: 0, drawLimit: isFirst ? 0 : 1 },
     log: []
   };
   GAME.deck = deck; // top = end of array
@@ -736,16 +885,19 @@ document.getElementById('btnStartGame').addEventListener('click', () => {
     GAME.field.push({ uid: uidCounter++, cardId: id, faceUp: false, tapped: false, isGuardian: true });
   }
 
+  document.getElementById('logList').innerHTML = '';
   log(`対戦準備完了：${deckName}（${isFirst ? '先攻' : '後攻'}） 手札6枚・ガーディアン4枚を配置`);
 
   document.getElementById('setupPanel').style.display = 'none';
   document.getElementById('boardPanel').style.display = 'block';
+  undoStack.length = 0; updateUndoButton();	//undo
   renderBoard();
 });
 
 document.getElementById('btnEndGame').addEventListener('click', () => {
   if (!confirm('対戦を終了して準備画面に戻りますか？')) return;
   GAME = null;
+  undoStack.length = 0; updateUndoButton();	//undo
   document.getElementById('setupPanel').style.display = 'block';
   document.getElementById('boardPanel').style.display = 'none';
 });
@@ -753,10 +905,87 @@ document.getElementById('btnEndGame').addEventListener('click', () => {
 /* ============================================================
    SOLO PLAY: PHASE / TURN PROGRESSION
    ============================================================ */
+function nowTimeStr() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 function log(msg) {
   if (!GAME) return;
-  GAME.log.push(msg);
+  GAME.log.push({ t: nowTimeStr(), m: msg });
   renderLog();
+}
+
+/* ============================================================
+   トースト通知（画面中央に一瞬だけ表示）
+   ============================================================ */
+function showToast(text, opts) {
+  opts = opts || {};
+  let layer = document.getElementById('toastLayer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = 'toastLayer';
+    layer.className = 'toast-layer';
+    document.body.appendChild(layer);
+  }
+  const t = document.createElement('div');
+  t.className = 'toast' + (opts.variant === 'cpu' ? ' toast-cpu' : '') + (opts.variant === 'long' ? ' toast-long' : '') + (opts.variant === 'legacy' ? ' toast-legacy' : '');
+  const main = document.createElement('div');
+  main.textContent = text;
+  t.appendChild(main);
+  if (opts.sub) {
+    const sub = document.createElement('div');
+    sub.className = 'toast-sub';
+    sub.textContent = opts.sub;
+    t.appendChild(sub);
+  }
+  const ms = opts.ms || 1300;
+  t.style.animationDuration = (ms / 1000) + 's';
+  layer.appendChild(t);
+  setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, ms);
+}
+
+/* ============================================================
+   ポップアップの配置（基本はカードの「上」。入らなければ下、どちらも狭ければ広い方にスクロール付きで）
+   ============================================================ */
+function placePopup(menuEl, anchorEl) {
+  const GAP = 4;
+  menuEl.style.maxHeight = '';
+  menuEl.style.overflowY = '';
+  menuEl.style.visibility = 'hidden';
+  menuEl.classList.add('is-open');
+  const r = anchorEl.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+  const w = menuEl.offsetWidth, h = menuEl.offsetHeight;
+
+  // 上端の限界：固定されているヘッダー(board-topbar)の下まで
+  let topLimit = 8;
+  const bar = document.querySelector('.tab-panel.is-active .board-topbar');
+  if (bar) {
+    const pos = getComputedStyle(bar).position;
+    if (pos === 'sticky' || pos === 'fixed') topLimit = Math.max(topLimit, bar.getBoundingClientRect().bottom + 8);
+  }
+  const roomAbove = r.top - GAP - topLimit;
+  const roomBelow = vh - 8 - (r.bottom + GAP);
+
+  let top;   // viewport 座標
+  if (h <= roomAbove) top = r.top - GAP - h;
+  else if (h <= roomBelow) top = r.bottom + GAP;
+  else if (roomAbove >= roomBelow) {
+    const mh = Math.max(80, roomAbove);
+    menuEl.style.maxHeight = mh + 'px'; menuEl.style.overflowY = 'auto';
+    top = r.top - GAP - Math.min(h, mh);
+  } else {
+    const mh = Math.max(80, roomBelow);
+    menuEl.style.maxHeight = mh + 'px'; menuEl.style.overflowY = 'auto';
+    top = r.bottom + GAP;
+  }
+  let left = Math.min(r.left, vw - w - 8);
+  left = Math.max(8, left);
+  menuEl.style.left = (window.scrollX + left) + 'px';
+  menuEl.style.top = (window.scrollY + top) + 'px';
+  menuEl.style.visibility = '';
 }
 
 function drawCards(n) {
@@ -767,9 +996,13 @@ function drawCards(n) {
     GAME.hand.push({ uid: uidCounter++, cardId: id });
     drawn++;
   }
-  if (drawn > 0) log(`${drawn}枚ドローしました（山札残り${GAME.deck.length}枚）`);
+  GAME.resources.drawn += drawn;	//ドロー制限
+  if (drawn > 0) {
+    log(`${drawn}枚ドローしました（山札残り${GAME.deck.length}枚）`);
+    showToast('ドロー！' + (drawn > 1 ? ` ×${drawn}` : ''));
+  }
 }
-
+/*
 document.getElementById('btnDrawExtra').addEventListener('click', () => {
   if (!GAME) return;
   drawCards(1);
@@ -785,8 +1018,33 @@ document.getElementById('btnAdvancePhase').addEventListener('click', () => {
   onEnterPhase(GAME.phase);
   renderBoard();
 });
+*/
+document.getElementById('btnDrawExtra').addEventListener('click', () => {
+  if (!GAME) return;
+  runUndoable(() => {
+    const r = GAME.resources;
+    if (r.drawn >= r.drawLimit &&
+        !confirm(`このターンのドロー上限（${r.drawLimit}枚）に達しています。\n効果などで追加ドローする場合は続行してください。`)) return;
+    drawCards(1);
+    renderBoard();
+  });
+});
+
+document.getElementById('btnAdvancePhase').addEventListener('click', () => {
+  if (!GAME) return;
+  runUndoable(() => {
+    const order = ['start', 'draw', 'main', 'end'];
+    let idx = (order.indexOf(GAME.phase) + 1) % order.length;
+    if (idx === 0) GAME.turn += 1;
+    GAME.phase = order[idx];
+    onEnterPhase(GAME.phase);
+    renderBoard();
+  });
+});
 
 function onEnterPhase(phase) {
+	
+/*
   if (phase === 'start') {
     GAME.field.forEach(c => c.tapped = false);
     GAME.resources.manaPlace = 1;
@@ -798,6 +1056,21 @@ function onEnterPhase(phase) {
     } else {
       drawCards(1);
     }
+*/
+	if (phase === 'start') {
+		GAME.field.forEach(c => c.tapped = false);
+		GAME.resources.manaPlace = 1;
+		GAME.resources.summon = 1;
+		GAME.resources.drawn = 0;
+		GAME.resources.drawLimit = 1;
+		log(`── ターン${GAME.turn} スタートフェイズ：戦場を起こし、各種権利とドロー回数をリセット ──`);
+	} else if (phase === 'draw') {
+		if (GAME.resources.drawLimit === 0) {
+			log('先攻1ターン目のためドローをスキップします');
+		} else {
+			drawCards(1);
+		}
+	
   } else if (phase === 'main') {
     log(`ターン${GAME.turn} メインフェイズ`);
   } else if (phase === 'end') {
@@ -850,12 +1123,23 @@ function moveInstance(uid, fromZone, toZone, opts = {}) {
   renderBoard();
 }
 
+/* 配置・召喚・使用したとき、能力があればトースト＋ログで知らせる（効果の処理は手動） */
+function announceAbility(card, kind) {
+  const text = IjindenSummon.abilityText(card, kind);
+  if (!text) return;
+  const notes = IjindenGlossary.noteLine(text);
+  showToast(`${card.name}の能力`, { variant: 'ability', sub: text + (notes ? '\n' + notes : ''), ms: 2600 + Math.min(2400, notes.length * 18) });
+  log(`　${card.name}の能力：${text.replace(/\n/g, ' ')}（自動処理されません）`);
+}
+
 /* --- resource-aware quick actions --- */
 function doManaPlace(uid, faceUp) {
   if (GAME.resources.manaPlace < 1) { log('マリョク配置権がありません'); return; }
   GAME.resources.manaPlace -= 1;
   moveInstance(uid, 'hand', 'mana', { faceUp });
+  if (faceUp) announceAbility(CARDS_BY_ID[(GAME.mana.find(x => x.uid === uid) || {}).cardId] || {}, 'mana');
 }
+/*
 function doSummon(uid) {
   if (GAME.resources.summon < 1) { log('イジン召喚権がありません'); return; }
   GAME.resources.summon -= 1;
@@ -870,6 +1154,63 @@ function doMahouUse(uid) {
   moveInstance(uid, 'hand', 'graveyard', {});
   if (card) log(`（魔力コスト${card.magic_cost ?? 0}枚を魔力ゾーンから墓地に置くのを忘れずに）`);
 }
+*/
+function summonAnalysis(card) {
+  return IjindenSummon.analyze(card, GAME.mana, GAME.field, CARDS_BY_ID);
+}
+function doSummon(uid) {
+  const inst = GAME.hand.find(x => x.uid === uid);
+  if (!inst) return;
+  const card = CARDS_BY_ID[inst.cardId];
+  if (GAME.resources.summon < 1) { log('イジン召喚権がありません'); return; }
+  const info = summonAnalysis(card);
+  const needModal = info.auto > 0 || info.hints.length > 0 || checkPlayable(card, info.auto).length > 0;
+  if (!needModal) { finalizeSummon(uid, 0); return; }
+  openSummonModal(card, {
+    base: card.level || 0, auto: info.auto, parts: info.parts, hints: info.hints,
+    flips: info.flips.map(f => f.name)
+  }, extra => ({
+    problems: checkPlayable(card, info.auto + extra),
+    note: manaSummaryText()
+  }), extra => runUndoable(() => finalizeSummon(uid, extra)), { allowForce: true });
+}
+// 実際の召喚処理（軽減値 = 自動分 + 手動分）
+function finalizeSummon(uid, extra) {
+  const inst = GAME.hand.find(x => x.uid === uid);
+  if (!inst) return;
+  const card = CARDS_BY_ID[inst.cardId];
+  if (GAME.resources.summon < 1) { log('イジン召喚権がありません'); renderBoard(); return; }
+  const info = summonAnalysis(card);
+  const red = info.auto + (extra || 0);
+  GAME.resources.summon -= 1;
+  moveInstance(uid, 'hand', 'field', { faceUp: true });
+  if (red > 0) log(`　${card.name}：召喚時レベル ${card.level || 0} → ${IjindenSummon.effectiveLevel(card.level, red)}（軽減${red}）`);
+  announceAbility(card, 'field');
+  info.flips.forEach(f => {
+    const m = GAME.mana.find(x => x.uid === f.uid);
+    if (m && m.faceUp) { m.faceUp = false; log(`　${f.name}は裏向きになりました`); }
+  });
+  renderBoard();
+}
+function doHaikeiUse(uid) {
+  const inst = GAME.hand.find(x => x.uid === uid);
+  if (!inst) return;
+  const card = CARDS_BY_ID[inst.cardId];
+  if (!confirmIfRestricted(card)) { log(`${card.name} の使用を取りやめました`); return; }
+  moveInstance(uid, 'hand', 'field', { faceUp: true });
+  announceAbility(card, 'field');
+}
+function doMahouUse(uid) {
+  const inst = GAME.hand.find(x => x.uid === uid);
+  if (!inst) return;
+  const card = CARDS_BY_ID[inst.cardId];
+  const cost = card.magic_cost ?? 0;
+  const extra = GAME.mana.length < cost ? [`魔力ゾーン${GAME.mana.length}枚ではコスト${cost}を払えません`] : [];
+  if (!confirmIfRestricted(card, extra)) { log(`${card.name} の使用を取りやめました`); return; }
+  moveInstance(uid, 'hand', 'graveyard', {});
+  log(`（魔力コスト${cost}枚を魔力ゾーンから墓地に置くのを忘れずに）`);
+}
+
 function toggleFaceUp(uid, zoneKey) {
   const arr = zoneArrayOf(zoneKey);
   const inst = arr.find(x => x.uid === uid);
@@ -889,16 +1230,33 @@ function toggleTapped(uid) {
 /* ============================================================
    SOLO PLAY: RENDERING
    ============================================================ */
+/* ログ描画：左に時刻、右にメッセージ。最新行が見える位置にいるときは自動で最下部へ追従する
+   （過去ログを読もうと上へスクロールしている間は、その位置を維持する） */
 function renderLog() {
   const el = document.getElementById('logList');
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  const keepTop = el.scrollTop;
   el.innerHTML = '';
-  GAME.log.slice(-60).forEach(m => {
-    const d = document.createElement('div');
-    d.textContent = m;
-    el.appendChild(d);
+  GAME.log.slice(-200).forEach(entry => {
+    const e = (typeof entry === 'string') ? { t: '', m: entry } : entry;
+    const row = document.createElement('div');
+    row.className = 'log-row';
+    const t = document.createElement('span');
+    t.className = 'log-time';
+    t.textContent = e.t || '';
+    const m = document.createElement('span');
+    m.className = 'log-msg';
+    m.textContent = e.m;
+    row.appendChild(t);
+    row.appendChild(m);
+    el.appendChild(row);
   });
+  el.scrollTop = atBottom ? el.scrollHeight : keepTop;
 }
-
+function scrollLogToEnd(listEl) {
+  if (listEl) listEl.scrollTop = listEl.scrollHeight;
+}
+/*
 function manaSummaryText() {
   let levelTotal = 0, faceDownCount = 0;
   const colors = new Set();
@@ -913,6 +1271,124 @@ function manaSummaryText() {
   });
   const colorTxt = colors.size ? [...colors].join('') : 'なし';
   return `使用可能な色: ${colorTxt} ／ レベル上限: ${levelTotal + faceDownCount}（表向き合計${levelTotal} + 裏向き${faceDownCount}枚）`;
+}
+*/
+function getManaInfo() {
+  let levelTotal = 0, faceDown = 0;
+  const colors = new Set();
+  GAME.mana.forEach(m => {
+    if (m.faceUp) {
+      const c = CARDS_BY_ID[m.cardId];
+      levelTotal += (c.level || 0);
+      if (c.color && c.color !== '無') [...c.color].forEach(ch => COLOR_HEX[ch] && colors.add(ch));
+    } else faceDown += 1;
+  });
+  return { levelCap: levelTotal + faceDown, levelTotal, faceDown, colors };
+}
+
+function manaSummaryText() {
+  const { levelCap, levelTotal, faceDown, colors } = getManaInfo();
+  const colorTxt = colors.size ? [...colors].join('') : 'なし';
+  return `使用可能な色: ${colorTxt} ／ レベル上限: ${levelCap}（表向き合計${levelTotal} + 裏向き${faceDown}枚）`;
+}
+
+function checkPlayable(card, reduction = 0) {
+  const { levelCap, colors } = getManaInfo();
+  const problems = [];
+  const eff = (card.type === 'イジン') ? IjindenSummon.effectiveLevel(card.level, reduction) : (card.level || 0);
+  if (eff > levelCap) problems.push(reduction > 0 ? `レベル${card.level}（軽減後${eff}）が上限${levelCap}を超えています` : `レベル${card.level}が上限${levelCap}を超えています`);
+  const need = (card.color && card.color !== '無') ? [...card.color].filter(ch => ch !== '無' && COLOR_HEX[ch]) : [];
+  const lacking = need.filter(ch => !colors.has(ch));
+  if (lacking.length) problems.push(`使用可能な色が足りません（${lacking.join('')}）`);
+  return problems;
+}
+
+function confirmIfRestricted(card, extra = []) {
+  const problems = checkPlayable(card).concat(extra);
+  if (!problems.length) return true;
+  return confirm(`${card.name}\n・${problems.join('\n・')}\n\nそれでも続行しますか？`);
+}
+
+/* 召喚確認モーダル（レベル軽減・要確認の効果・裏向きになるカードを見せる）
+   info: {base, auto, parts:[{name,n}], hints:[{name,text}], flips:[name]}
+   getCheck(extra) -> {problems:[], note}
+   onConfirm(extra) / opts.allowForce: 条件未達でも実行できるか */
+function openSummonModal(card, info, getCheck, onConfirm, opts) {
+  opts = opts || {};
+  let extra = 0;
+  modalContent.classList.remove('detail-face');
+  modalContent.innerHTML = '';
+  const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  modalContent.appendChild(mk('h3', '', `イジン召喚：${card.name}`));
+  const grid = mk('div', 'sm-grid');
+  modalContent.appendChild(grid);
+
+  const row = (label, node) => { grid.appendChild(mk('div', 'sm-label', label)); grid.appendChild(node); };
+  row('元のレベル', mk('div', '', `Lv${info.base}`));
+  if (info.auto > 0) row('自動で拾った軽減', mk('div', '', `−${info.auto}（${info.parts.map(p => `${p.name} −${p.n}`).join('、')}）`));
+
+  const stepper = mk('div', 'sm-stepper');
+  const minus = mk('button', 'btn btn-ghost', '−'), plus = mk('button', 'btn btn-ghost', '＋');
+  const val = mk('span', 'sm-val', '0');
+  stepper.append(minus, val, plus);
+  row('手動で追加の軽減', stepper);
+
+  const eff = mk('div', 'sm-eff');
+  row('召喚時のレベル', eff);
+
+  const checkBox = mk('div', 'sm-checks');
+  modalContent.appendChild(checkBox);
+
+  if (info.hints.length) {
+    modalContent.appendChild(mk('div', 'm-section-label', '要確認の効果（自動では数えていません）'));
+    info.hints.forEach(h => {
+      const b = mk('div', 'sm-hint');
+      b.appendChild(mk('b', '', h.name));
+      b.appendChild(mk('div', '', h.text));
+      modalContent.appendChild(b);
+    });
+    modalContent.appendChild(mk('div', 'sm-note', '上の効果で下がる分は「手動で追加の軽減」に入力してください。'));
+  }
+  if (info.flips && info.flips.length) {
+    modalContent.appendChild(mk('div', 'sm-flip', `召喚後に裏向きになるカード：${info.flips.join('、')}`));
+  }
+
+  const btnRow = mk('div', 'btn-row');
+  const ok = mk('button', 'btn btn-primary', '召喚する');
+  const cancel = mk('button', 'btn btn-ghost', 'キャンセル');
+  btnRow.append(ok, cancel);
+  modalContent.appendChild(btnRow);
+
+  function refresh() {
+    val.textContent = String(extra);
+    const red = info.auto + extra;
+    eff.textContent = `Lv${Math.max(0, info.base - red)}` + (red > 0 ? `（軽減${red}）` : '');
+    const chk = getCheck(extra);
+    checkBox.innerHTML = '';
+    if (chk.note) checkBox.appendChild(mk('div', 'sm-note', chk.note));
+    if (!chk.problems.length) checkBox.appendChild(mk('div', 'sm-ok', '✓ 召喚条件を満たしています'));
+    else chk.problems.forEach(p => checkBox.appendChild(mk('div', 'sm-ng', '✗ ' + p)));
+    if (!chk.problems.length) { ok.disabled = false; ok.textContent = '召喚する'; }
+    else if (opts.allowForce) { ok.disabled = false; ok.textContent = '条件未達でも召喚する'; }
+    else { ok.disabled = true; ok.textContent = '召喚できません'; }
+  }
+  minus.addEventListener('click', () => { if (extra > 0) { extra--; refresh(); } });
+  plus.addEventListener('click', () => { if (extra < 20) { extra++; refresh(); } });
+  ok.addEventListener('click', () => { const x = extra; closeModal(); onConfirm(x); });
+  cancel.addEventListener('click', closeModal);
+  refresh();
+  modalOverlay.classList.add('is-open');
+}
+
+/* ミニカード左上の丸型レベルバッジ（表向きのときだけ使う） */
+function miniLevelBadge(card) {
+  const b = document.createElement('span');
+  b.className = 'mini-level';
+  b.style.background = cardPrimaryColorHex(card);
+  b.textContent = card.level ?? 0;
+  b.title = `レベル${card.level ?? 0}`;
+  return b;
 }
 
 function createMiniCard(inst, zoneKey) {
@@ -935,7 +1411,9 @@ function createMiniCard(inst, zoneKey) {
     metaEl.className = 'mini-card-meta';
     metaEl.textContent = `${card.type} ・ ${cardStatText(card)}`;
     el.appendChild(metaEl);
-  }
+    el.classList.add('has-level');
+    el.appendChild(miniLevelBadge(card));
+	}
 
   if (zoneKey === 'field' && inst.tapped) el.classList.add('is-tapped');
   if (zoneKey === 'field' && inst.isGuardian && faceUp) {
@@ -969,6 +1447,8 @@ function renderBoard() {
 
   document.getElementById('manaSummary').textContent = manaSummaryText();
 
+  document.getElementById('cntDraw').textContent = `${GAME.resources.drawn}/${GAME.resources.drawLimit}`; //ドロー数カウンタ
+
   renderZoneCards('field', 'zoneField');
   renderZoneCards('mana', 'zoneMana');
   renderZoneCards('graveyard', 'zoneGrave');
@@ -990,13 +1470,21 @@ function closeActionMenu() {
 document.addEventListener('click', (e) => {
   if (!actionMenuEl.contains(e.target) && !e.target.closest('.mini-card')) closeActionMenu();
 });
-
+/*
 function addMenuBtn(label, fn) {
   const b = document.createElement('button');
   b.textContent = label;
   b.addEventListener('click', () => { closeActionMenu(); fn(); });
   actionMenuEl.appendChild(b);
 }
+*/
+function addMenuBtn(label, fn) {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.addEventListener('click', () => { closeActionMenu(); runUndoable(fn); });
+  actionMenuEl.appendChild(b);
+}
+
 function addMenuDivider() {
   const d = document.createElement('div'); d.className = 'am-divider';
   actionMenuEl.appendChild(d);
@@ -1017,7 +1505,10 @@ function openActionMenu(inst, zoneKey, anchorEl) {
   if (zoneKey === 'hand') {
     addMenuBtn(`マリョク配置（表） [権:${GAME.resources.manaPlace}]`, () => doManaPlace(inst.uid, true));
     addMenuBtn(`マリョク配置（裏） [権:${GAME.resources.manaPlace}]`, () => doManaPlace(inst.uid, false));
-    if (card.type === 'イジン') addMenuBtn(`イジン召喚 [権:${GAME.resources.summon}]`, () => doSummon(inst.uid));
+    if (card.type === 'イジン') {
+      const red = summonAnalysis(card).auto;
+      addMenuBtn(`イジン召喚${red > 0 ? `（Lv−${red}）` : ''} [権:${GAME.resources.summon}]`, () => doSummon(inst.uid));
+    }
     if (card.type === 'ハイケイ') addMenuBtn('ハイケイ使用（戦場へ）', () => doHaikeiUse(inst.uid));
     if (card.type === 'マホウ') addMenuBtn(`マホウ使用（墓地へ・コスト${card.magic_cost ?? 0}）`, () => doMahouUse(inst.uid));
     addMenuBtn('裏向きで戦場に置く（ガーディアン化）', () => moveInstance(inst.uid, 'hand', 'field', { faceUp: false, isGuardian: true }));
@@ -1062,10 +1553,7 @@ function openActionMenu(inst, zoneKey, anchorEl) {
   addMenuBtn('カード詳細を見る', () => openCardDetail(card.id));
 
   // position
-  const rect = anchorEl.getBoundingClientRect();
-  actionMenuEl.style.left = (window.scrollX + rect.left) + 'px';
-  actionMenuEl.style.top = (window.scrollY + rect.bottom + 4) + 'px';
-  actionMenuEl.classList.add('is-open');
+  placePopup(actionMenuEl, anchorEl);   // カードの上に出す（入らなければ下）
 }
 
 /* ============================================================
