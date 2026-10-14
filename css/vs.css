@@ -1,0 +1,169 @@
+/* ===== CPU対戦タブ（vs.css） ===== */
+.vs-side{
+  background: var(--bg-panel); border:1px solid var(--line); border-radius: var(--radius);
+  padding:12px; margin-bottom:14px;
+}
+.vs-side.vs-cpu{ background:#27130e; border-color:#7a2d1b; }
+.vs-side-title{
+  margin:0 0 10px; font-family: var(--font-display); font-size:15px; color: var(--gold-bright);
+  display:flex; align-items:baseline; gap:12px;
+}
+.vs-side-title small{ font-size:11px; color:#bba98c; font-family: var(--font-body); font-weight:400; }
+.vs-zones{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+@media (max-width: 900px){ .vs-zones{ grid-template-columns: 1fr; } }
+.vs-zones .zone{ min-height:110px; }
+
+.vs-banner{
+  background: var(--bg-panel-raise); border:1px solid var(--gold); border-radius: var(--radius);
+  padding:10px 14px; margin-bottom:14px;
+}
+.vs-banner-main{ font-weight:700; font-size:14px; color: var(--gold-bright); }
+.vs-banner-sub{ font-size:12px; color:#e3d3b4; margin-top:3px; }
+.vs-banner.is-win{ border-color: var(--green-ok); }
+.vs-banner.is-win .vs-banner-main{ color:#8fd6a0; font-size:18px; }
+.vs-banner.is-lose{ border-color: var(--vermilion-bright); }
+.vs-banner.is-lose .vs-banner-main{ color: var(--vermilion-bright); font-size:18px; }
+
+/* カードの選択状態 */
+.mini-card.is-selectable{ border-color: var(--green-ok); box-shadow: 0 0 0 1px rgba(79,143,95,.6); }
+.mini-card.is-selected{ border-color: var(--gold-bright); box-shadow: 0 0 0 3px rgba(230,200,105,.55); }
+.mini-card.is-attacker{ border-color: var(--vermilion-bright); }
+.mini-card-tag.tag-block{ background:#2f6ea6; }
+.mini-card.is-facedown{ min-height:64px; }
+
+/* 無効なボタン / メニュー項目 */
+.btn:disabled{ opacity:.4; cursor:not-allowed; filter:none; }
+.action-menu button:disabled{ opacity:.4; cursor:not-allowed; background:transparent; color: var(--paper); }
+
+/* 魔力コスト支払いモーダル */
+.pay-item{
+  display:block; width:100%; text-align:left; margin-bottom:5px; padding:8px 10px;
+  border:1px solid var(--ink-soft); border-radius:6px; background: var(--paper-dim);
+  color: var(--ink); cursor:pointer; font-size:13px;
+}
+.pay-item.is-selected{ background: var(--gold); border-color: var(--ink); font-weight:700; }
+
+/* ===== 対戦画面：固定ヘッダー（board-topbar）＋ログ ===== */
+.board-topbar{
+  position: sticky; top: 0; z-index: 40;
+  margin-bottom: 0;
+  gap: 10px 18px;
+  box-shadow: 0 8px 18px rgba(0,0,0,.5);
+}
+.board-topbar + *{ margin-top: 14px; }   /* 固定バーの下に隙間を作る（スクロール時にカードが透けないようバー自体の margin は0） */
+
+.topbar-main{ display:flex; align-items:center; gap:12px 18px; flex-wrap:wrap; flex:0 1 auto; }
+.topbar-main .board-actions{ margin-left:auto; }
+
+.board-topbar .log-panel{
+  margin:0; flex:1 1 300px; min-width:260px;
+  padding:8px 10px; background: var(--bg-panel-raise);
+  display:flex; flex-direction:column;
+}
+.board-topbar .log-panel .zone-title{ margin:0 0 4px; font-size:12px; }
+
+/* ログ：古い→新しい順（最新が最下行）。左に時刻 */
+.log-list{ flex-direction:column; }
+.board-topbar .log-list{ height:92px; max-height:92px; flex:none; }
+.log-row{ display:flex; gap:8px; line-height:1.4; }
+.log-time{ flex:0 0 auto; color:#9a845f; font-variant-numeric: tabular-nums; }
+.log-msg{ flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+.log-row:last-child .log-msg{ color: var(--paper); }   /* 最新行を明るく */
+
+@media (max-width: 1100px){
+  .board-topbar .log-list{ height:64px; max-height:64px; }
+}
+@media (max-width: 700px){
+  .board-topbar{ position: static; }   /* 狭い画面では固定すると盤面が隠れるので固定しない */
+}
+
+/* ===== ドロー等のトースト（画面中央） ===== */
+.toast-layer{
+  position:fixed; inset:0; z-index:200; pointer-events:none;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+}
+.toast{
+  font-family: var(--font-display, inherit); font-weight:800; letter-spacing:.08em;
+  font-size:clamp(34px, 7vw, 60px); color:#fff6d6;
+  background:rgba(20,16,8,.86); border:2px solid var(--gold, #e6c869); border-radius:16px;
+  padding:14px 38px; box-shadow:0 10px 40px rgba(0,0,0,.55), 0 0 28px rgba(230,200,105,.35);
+  text-shadow:0 2px 0 rgba(0,0,0,.5);
+  animation: toastPop 1.3s ease-out forwards;
+}
+.toast.toast-cpu{ font-size:clamp(20px, 4vw, 30px); color:#d9d2bd; border-color:#8a8470; padding:8px 24px; }
+@keyframes toastPop{
+  0%{ opacity:0; transform:scale(.6); }
+  14%{ opacity:1; transform:scale(1.12); }
+  26%{ transform:scale(1); }
+  76%{ opacity:1; }
+  100%{ opacity:0; transform:translateY(-14px) scale(1); }
+}
+@media (prefers-reduced-motion: reduce){
+  .toast{ animation: toastFade 1.3s linear forwards; }
+  @keyframes toastFade{ 0%{opacity:0} 10%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+}
+
+/* ===== 召喚確認モーダル ===== */
+.sm-grid{ display:grid; grid-template-columns:auto 1fr; gap:6px 12px; align-items:center; font-size:13px; margin:8px 0; }
+.sm-label{ color:var(--ink-soft, #999); font-size:12px; }
+.sm-stepper{ display:flex; align-items:center; gap:10px; }
+.sm-stepper .btn{ min-width:34px; padding:2px 10px; }
+.sm-val{ min-width:24px; text-align:center; font-weight:700; }
+.sm-eff{ font-weight:800; font-size:18px; }
+.sm-checks{ margin:8px 0; display:flex; flex-direction:column; gap:3px; font-size:13px; }
+.sm-ok{ color:#2e8b57; font-weight:700; }
+.sm-ng{ color:#c0392b; font-weight:700; }
+.sm-note{ font-size:11.5px; color:var(--ink-soft, #999); }
+.sm-hint{ font-size:12px; background:rgba(230,200,105,.12); border-left:3px solid var(--gold, #e6c869); padding:6px 8px; margin:4px 0; white-space:pre-wrap; }
+.sm-flip{ font-size:12px; margin-top:8px; color:#b9770e; }
+.action-menu{ overflow-y:auto; }
+
+/* ===== バトル演出トースト・遺業フェーズ ===== */
+.toast > div{ line-height:1.25; }
+.toast.toast-long{ font-size:clamp(20px, 3.8vw, 32px); max-width:min(92vw, 760px); text-align:center; padding:14px 28px; }
+.toast.toast-legacy{ border-color:#b58be0; box-shadow:0 10px 40px rgba(0,0,0,.55), 0 0 28px rgba(160,110,230,.45); max-width:min(92vw, 760px); text-align:center; }
+.toast .toast-sub{ font-size:clamp(13px, 2.2vw, 18px); font-weight:500; letter-spacing:0; margin-top:8px; color:#e3dcc3; white-space:pre-wrap; text-shadow:none; }
+.vs-banner-actions{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.btn.btn-sm{ padding:3px 10px; font-size:12px; }
+.vs-legacy-row{ margin-top:8px; padding:8px 10px; border-left:3px solid #b58be0; background:rgba(160,110,230,.12); border-radius:4px; }
+.vs-legacy-name{ font-weight:700; font-size:13px; }
+.vs-legacy-text{ font-size:12.5px; margin-top:2px; white-space:pre-wrap; }
+
+/* ===== 能力トースト・用語の注記 ===== */
+.toast.toast-ability{ font-size:clamp(20px, 3.8vw, 32px); border-color:var(--vermilion-bright); max-width:min(92vw, 760px); text-align:center;
+  box-shadow:0 10px 40px rgba(0,0,0,.55), 0 0 28px rgba(240,85,31,.5); }
+.kw-term{ border-bottom:1px dotted currentColor; cursor:help; }
+.kw-notes{ margin-top:8px; padding:7px 10px; border-left:3px solid var(--gold); background:rgba(233,168,37,.10); border-radius:4px; font-size:12px; line-height:1.55; }
+.kw-note + .kw-note{ margin-top:3px; }
+.kw-note b{ color:var(--gold-bright); margin-right:2px; }
+.vs-legacy-row .kw-notes{ background:rgba(0,0,0,.25); }
+.vs-legacy-row{ border-left-color:var(--vermilion-bright); background:rgba(240,85,31,.12); }
+.toast.toast-legacy{ border-color:var(--vermilion-bright); box-shadow:0 10px 40px rgba(0,0,0,.55), 0 0 28px rgba(240,85,31,.5); }
+/* カード詳細（明るい紙色のモーダル）の中では、注記の用語名を暗い色にして読みやすくする */
+.modal-card .kw-note b, .card-tile .kw-note b{ color:#494028; }
+
+/* 新しく置かれたイジン：右上に赤い「New」 */
+.mini-card-new{ position:absolute; top:2px; right:4px; font-size:9px; font-weight:800; letter-spacing:.02em; color:#ff3b3b; text-shadow:0 0 2px rgba(0,0,0,.55); pointer-events:none; }
+.mini-card.has-new .mini-card-tag{ top:15px; }
+.vs-assist-row{ border-left:3px solid var(--gold-bright); }
+
+/* 戦績 */
+.vs-stats{ margin-top:22px; padding-top:14px; border-top:1px solid var(--line); }
+.vs-stats-total{ margin:8px 0; font-weight:700; color:var(--gold-bright); }
+.vs-stats-block{ margin:12px 0; }
+.vs-stats-table{ width:100%; border-collapse:collapse; font-size:13px; }
+.vs-stats-table th, .vs-stats-table td{ border-bottom:1px solid var(--line); padding:5px 8px; text-align:right; }
+.vs-stats-table th:first-child, .vs-stats-table td.vs-stats-name{ text-align:left; }
+.vs-stats-table th{ color:var(--ink-soft); font-weight:600; }
+
+/* 状態表示：破壊されない（赤枠）／能力禁止中（青枠） */
+.mini-card.is-indestructible{ box-shadow: inset 0 0 0 2px #e23b3b; }
+.mini-card.is-silenced{ box-shadow: inset 0 0 0 2px #3b8ee2; }
+.mini-card.is-indestructible.is-silenced{ box-shadow: inset 0 0 0 2px #e23b3b, inset 0 0 0 4px #3b8ee2; }
+.mini-card-states{ position:absolute; right:3px; bottom:2px; display:flex; flex-direction:column; align-items:flex-end; gap:1px; pointer-events:none; }
+.mini-card-states span{ font-size:9px; font-weight:800; line-height:1.1; text-shadow:0 0 2px rgba(0,0,0,.6); }
+.mini-card-states .st-ind{ color:#ff5a5a; }
+.mini-card-states .st-sil{ color:#6db3ff; }
+
+/* 装備しているカード（イジンに重ねて小さく表示） */
+.mini-card-equips{ margin-top:2px; font-size:9px; line-height:1.25; color:#c9a24a; font-weight:700; word-break:break-all; }
