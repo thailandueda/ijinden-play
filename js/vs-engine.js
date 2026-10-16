@@ -565,11 +565,14 @@
       return resolveBattle(G);
     }
 
+    // ログ表示用「あなたのイジン「織田信長」」「CPUのガーディアン」
+    const who = (pi, inst) => `${pi === 0 ? 'あなた' : 'CPU'}の` + (inst.faceUp ? `${cardOf(inst).type}「${cardOf(inst).name}」` : 'ガーディアン');
     function resolveBattle(G) {
       const atkIdx = G.current, defIdx = 1 - atkIdx;
       const A = G.players[atkIdx], D = G.players[defIdx];
       const blocks = G.battle.blocks;
       const destroyedA = [], destroyedD = [];
+      const records = [];   // ログ用：1体のアタッカーごとのバトルの中身
       let winnerReason = null;
       // バトル解決前に円形闘技場が戦場を離れていたら、ガーディアンはアタッカーでなくなり、それをブロックしていたカードもブロッカーでなくなる
       if (!A.field.some(x => x.faceUp && cardOf(x).name === '円形闘技場')) {
@@ -590,17 +593,23 @@
         const lost = Object.keys(blocks).filter(b => blocks[b] === auid).length - blockers.length;
         if (lost > 0) log(G, `　ブロッカーが${lost}体いなくなりました（ブロッカーの指定は終わっているため、他のカードでは代わりにブロックできません）`);
         if (blockers.length < need) {
+          log(G, `【バトル】${who(atkIdx, att)}（アタック時パワー${attackPowerOf(att, G)}）` + (blockers.length ? ` vs ${blockers.map(b => who(defIdx, b)).join('＋')}` : '') +
+            ` → ブロッカー${blockers.length}体／必要${need}体のため、${nm(G, defIdx)}は攻撃を防げませんでした`);
           winnerReason = `${att.faceUp ? cardOf(att).name : 'ガーディアン'}の攻撃を防げなかった` + (lost > 0 ? '（ブロッカーが外れて防がれなかった）' : need > 1 ? `（${need}体以上のブロッカーが必要）` : '');
           break;
         }
         const pa = attackPowerOf(att, G);
         const sumB = blockers.reduce((s, b) => s + (b.faceUp ? blockPowerOf(b, G) : 0), 0);
         const attLoses = pa <= sumB;
-        log(G, `バトル解決：${att.faceUp ? cardOf(att).name : 'ガーディアン'}（${pa}） vs ブロッカー${blockers.length}体（合計${sumB}）`);
-        blockers.forEach(b => {
-          const lose = b.faceUp ? blockPowerOf(b, G) <= pa : pa > 0;
-          if (lose) destroyedD.push(b);
+        const bl = blockers.map(b => ({ inst: b, label: who(defIdx, b), power: b.faceUp ? blockPowerOf(b, G) : null }));   // 名前は破壊で表向きになる前に確定
+        log(G, `【バトル】${who(atkIdx, att)}（アタック時パワー${pa}） vs ` +
+          bl.map(x => `${who(defIdx, x.inst)}（${x.power === null ? 'パワーなし' : 'ブロック時パワー' + x.power}）`).join('＋') +
+          (bl.length > 1 ? `　ブロッカー合計${sumB}` : ''));
+        bl.forEach(x => {
+          x.lose = x.power === null ? pa > 0 : x.power <= pa;
+          if (x.lose) destroyedD.push(x.inst);
         });
+        records.push({ att, label: who(atkIdx, att), pa, sumB, attLoses, bl });
         if (attLoses) destroyedA.push(att);
         else if (kwOf(att).mortal) { winnerReason = `${cardOf(att).name}（モータル）がバトルに勝利`; break; }
       }
@@ -618,7 +627,6 @@
           releaseEquips(G, pi, inst);
           inst.faceUp = true; inst.tapped = false; inst.isGuardian = false;
           P.grave.push(inst);
-          log(G, `　破壊：${nm(G, pi)}の${c.name}を墓地へ` + (hasLegacy(c) ? '　※遺業能力あり（自動処理されません）' : ''));
           items.push({ name: c.name, cardId: c.id });
           if (hasLegacy(c)) legacyFx.push({ type: 'legacy', pi, uid: inst.uid, name: c.name, cardId: c.id, text: String(c.legacy_ability).trim() });
         });
@@ -626,6 +634,22 @@
       };
       const dA = toGrave(A, destroyedA, atkIdx);
       const dD = toGrave(D, destroyedD, defIdx);
+      // バトルごとの結果と理由（学習用：どちらのパワーが上回ったから、何が墓地へ行ったか）
+      const gone = (P, inst) => P.grave.includes(inst);
+      const legacyNote = inst => (gone(A, inst) || gone(D, inst)) && hasLegacy(cardOf(inst)) ? '　※遺業能力あり' : '';
+      records.forEach(r => {
+        r.bl.forEach(x => {
+          const n = x.label;
+          if (!x.lose) log(G, `　→ ${n}：ブロック時パワー${x.power} ＞ アタッカー${r.pa} なので生き残り`);
+          else if (!gone(D, x.inst)) log(G, `　→ ${n}：負けたが「破壊されない」ため戦場に残る`);
+          else log(G, `　→ ${n}：` + (x.power === null ? 'ガーディアンはパワーを持たないので' : `ブロック時パワー${x.power} ≦ アタッカー${r.pa} なので`) + `破壊されて墓地へ` + (x.power === null ? `（ガーディアンの正体：${cardOf(x.inst).name}）` : '') + legacyNote(x.inst));
+        });
+        const an = r.label;
+        const onlyGuards = r.bl.every(x => x.power === null);
+        if (!r.attLoses) log(G, `　→ ${an}：` + (onlyGuards ? 'ブロッカーがガーディアンだけ（パワー0）なので生き残り' : `アタック時パワー${r.pa} ＞ ブロッカー${r.bl.length > 1 ? '合計' : ''}${r.sumB} なので生き残り`));
+        else if (!gone(A, r.att)) log(G, `　→ ${an}：負けたが「破壊されない」ため戦場に残る`);
+        else log(G, `　→ ${an}：アタック時パワー${r.pa} ≦ ブロッカー${r.bl.length > 1 ? '合計' : ''}${r.sumB} なので破壊されて墓地へ${legacyNote(r.att)}`);
+      });
       if (dA.length) G.fx.push({ type: 'destroy', pi: atkIdx, items: dA });
       if (dD.length) G.fx.push({ type: 'destroy', pi: defIdx, items: dD });
       if (!dA.length && !dD.length && !winnerReason) G.fx.push({ type: 'nodestroy' });
