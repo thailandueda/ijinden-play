@@ -400,8 +400,9 @@
       const n = num(m[1]);
       acts.push({ label: `${n}ドローする`, fn: () => { if (ok(ENG.manualDraw(G, 0, n), `${n}ドロー`)) render(); } });
     }
-    if ((m = text.match(/イジン召喚権[+＋](\d)/))) acts.push({ label: `イジン召喚権+${m[1]}`, fn: () => { if (ok(ENG.manualRights(G, 0, 'summon', Number(m[1])), `召喚権+${m[1]}`)) render(); } });
-    if ((m = text.match(/マリョク配置権[+＋](\d)/))) acts.push({ label: `マリョク配置権+${m[1]}`, fn: () => { if (ok(ENG.manualRights(G, 0, 'manaPlace', Number(m[1])), `配置権+${m[1]}`)) render(); } });
+    // m は後続の判定で上書きされるので、押したときではなくここで数値を確定しておく
+    if ((m = text.match(/イジン召喚権[+＋](\d)/))) { const n = Number(m[1]); acts.push({ label: `イジン召喚権+${n}`, fn: () => { if (ok(ENG.manualRights(G, 0, 'summon', n), `召喚権+${n}`)) render(); } }); }
+    if ((m = text.match(/マリョク配置権[+＋](\d)/))) { const n = Number(m[1]); acts.push({ label: `マリョク配置権+${n}`, fn: () => { if (ok(ENG.manualRights(G, 0, 'manaPlace', n), `配置権+${n}`)) render(); } }); }
     if ((m = text.match(/山札の上から([0-9１-４一-三])枚を墓地/))) {
       const n = num(m[1]);
       acts.push({ label: `自分の山札の上から${n}枚を墓地へ`, fn: () => { if (ok(ENG.manualMill(G, 0, n), `山札${n}枚を墓地へ`)) render(); } });
