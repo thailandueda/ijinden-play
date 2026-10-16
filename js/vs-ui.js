@@ -335,7 +335,8 @@
   }
 
   /* 遺業能力の「実行」ボタン（墓地に置かれたカードを、能力どおりに動かす） */
-  function legacyActions(f, done) {
+  function legacyActions(f, done0) {
+    const done = () => (f.curDone || done0)();
     const G = VS.G, P = G.players[f.pi], nmx = `${whose(f.pi)}${f.name}`;
     const acts = [];
     const mv = (to, opts, label) => () => {
@@ -383,7 +384,12 @@
   function assistActions(e, done) {
     const G = VS.G, P = G.players[0], acts = [];
     const text = e.text;
-    const ok = (r, msg) => { if (!r.ok) { flash(r.msg); return false; } ENG.addLog(G, `効果を手動で処理：${e.name}（${msg}）`); return true; };
+    const ok = (r, msg) => {
+      if (!r.ok) { flash(r.msg); return false; }
+      ENG.addLog(G, `効果を手動で処理：${e.name}（${msg}）`);
+      if (e.curAct) { (e.used = e.used || new Set()).add(e.curAct); doneToast(`${whose(e.pi)}${e.name}`, e.curAct); }
+      return true;
+    };
     const self = () => ['field', 'mana', 'grave'].map(z => ({ z, i: P[z].find(x => x.uid === e.uid) })).find(x => x.i);
     const pickMenu = (title, list, anchor, fn) => {
       if (!list.length) { flash('対象がありません'); return; }
@@ -423,6 +429,17 @@
     if (/これを破壊する/.test(text)) acts.push({ label: 'これを破壊する', fn: () => { if (ok(ENG.manualDestroy(G, 0, e.uid), '自壊')) render(); } });
     return acts;
   }
+  /* バナーの効果ボタンの二度押し対策：押した直後の短い間はほかの効果ボタンも受け付けない
+     （処理後に行が消えて、下の行のボタンが同じ位置に来ても誤って押さないように） */
+  let actLockUntil = 0;
+  const guarded = fn => ev => {
+    const now = Date.now();
+    if (now < actLockUntil) return;
+    actLockUntil = now + 700;
+    fn(ev.currentTarget);
+  };
+  const doneToast = (name, label) => showToast(`効果処理：${label}`, { variant: 'long', sub: name, ms: 1500 });
+
   function buildAssist(b) {
     const G = VS.G;
     VS.assist.forEach(e => {
@@ -434,9 +451,12 @@
       if (opt || man) row.appendChild(el('div', 'vs-legacy-text', (opt ? '任意：発動しなくてもかまいません' : '') + (opt && man ? ' ／ ' : '') + (man ? '強制：条件を満たしたら必ず処理します' : '')));
       const acts = el('div', 'vs-banner-actions');
       if (mine) assistActions(e, () => {}).forEach(a => {
-        const bt = el('button', 'btn btn-primary btn-sm', a.label);
+        const used = e.used && e.used.has(a.label);
+        // 一度処理した効果は「✓ 処理済み」にして押せなくする（もう一度必要なら「手動調整」から）
+        const bt = el('button', 'btn btn-sm ' + (used ? 'btn-ghost is-used' : 'btn-primary'), (used ? '✓ ' : '') + a.label + (used ? '（処理済み）' : ''));
         bt.dataset.vsmenu = '1';
-        bt.addEventListener('click', ev => a.fn(ev.currentTarget));
+        if (used) bt.disabled = true;
+        else bt.addEventListener('click', guarded(t => { e.curAct = a.label; a.fn(t); }));
         acts.appendChild(bt);
       });
       const adj = el('button', 'btn btn-ghost btn-sm', '手動調整 ▾');
@@ -514,19 +534,20 @@
           if (!VS.legacy.length) finishLegacy(); else render();
         };
         const acts = el('div', 'vs-banner-actions');
+        const doneWith = label => () => { doneToast(`${whose(f.pi)}${f.name}（遺業能力）`, label); done(); };
         legacyActions(f, done).forEach(a => {
           const bt = el('button', 'btn btn-primary btn-sm', a.label);
           bt.dataset.vsmenu = '1';
-          bt.addEventListener('click', e => a.fn(e.currentTarget));
+          bt.addEventListener('click', guarded(t => { f.curDone = doneWith(a.label); a.fn(t); }));
           acts.appendChild(bt);
         });
         const d = el('button', 'btn btn-ghost btn-sm', '🔍 カード詳細');
         d.addEventListener('click', () => openCardDetail(f.cardId));
         const ok = el('button', 'btn btn-ghost btn-sm', '処理済み（手動で処理した）');
-        ok.addEventListener('click', () => {
+        ok.addEventListener('click', guarded(() => {
           ENG.addLog(G, `遺業能力を処理：${whose(f.pi)}${f.name}`);
-          done();
-        });
+          doneWith('処理済み')();
+        }));
         acts.append(d, ok);
         row.appendChild(acts);
         b.appendChild(row);
