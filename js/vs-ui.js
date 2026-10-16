@@ -123,6 +123,7 @@
     VS.mode = 'normal'; VS.selAtk = new Set(); VS.selBlocker = null; VS.assign = {}; VS.busy = false; VS.flashMsg = ''; VS.legacy = []; VS.annaSel = new Set(); VS.trig = null; VS.afterAnna = null; VS.assist = []; VS.assistTurn = 0; fxCursor = 0;
     $('vsSetupPanel').style.display = 'none';
     $('vsBoard').style.display = 'block';
+    schedule(2200, () => showToast('ダイブトゥイジンデン！', { variant: 'dive', ms: 2200 }));
     render();
     if (VS.G.current === 1) runCpu();
   });
@@ -548,7 +549,7 @@
       const t = el('h3', 'zone-title', label);
       t.appendChild(el('span', 'zone-count', `(${P[key].length})`));
       z.appendChild(t);
-      if (key === 'mana' && pi === 0) z.appendChild(el('div', 'mana-summary', manaText(P)));
+      if (key === 'mana' && pi === 0) z.appendChild(buildManaSummary(el('div', 'mana-summary'), P.mana));
       const wrap = el('div', 'zone-cards');
       P[key].forEach(inst => wrap.appendChild(mini(inst, pi, key)));
       z.appendChild(wrap);

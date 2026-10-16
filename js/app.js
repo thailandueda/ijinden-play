@@ -930,7 +930,7 @@ function showToast(text, opts) {
     document.body.appendChild(layer);
   }
   const t = document.createElement('div');
-  t.className = 'toast' + (opts.variant === 'cpu' ? ' toast-cpu' : '') + (opts.variant === 'long' ? ' toast-long' : '') + (opts.variant === 'legacy' ? ' toast-legacy' : '');
+  t.className = 'toast' + (opts.variant ? ' toast-' + opts.variant : '');
   const main = document.createElement('div');
   main.textContent = text;
   t.appendChild(main);
@@ -1292,6 +1292,63 @@ function manaSummaryText() {
   return `使用可能な色: ${colorTxt} ／ レベル上限: ${levelCap}（表向き合計${levelTotal} + 裏向き${faceDown}枚）`;
 }
 
+/* マリョクゾーンの表示：色ごとのレベル内訳＋合計のレベル上限（ソロプレイと対戦で共通） */
+function buildManaSummary(box, manaList) {
+  const ORDER = '赤青緑黄紫無';
+  const groups = {};          // カードの色（例:「赤」「赤青」）ごとの表向きレベル合計
+  let faceDown = 0, total = 0;
+  const usable = new Set();
+  manaList.forEach(m => {
+    if (!m.faceUp) { faceDown += 1; return; }
+    const c = CARDS_BY_ID[m.cardId];
+    const cols = [...(c.color || '無')].filter(ch => COLOR_HEX[ch]);
+    const key = cols.length ? cols.sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)).join('') : '無';
+    groups[key] = (groups[key] || 0) + (c.level || 0);
+    total += (c.level || 0);
+    cols.forEach(ch => { if (ch !== '無') usable.add(ch); });
+  });
+  box.innerHTML = '';
+  const chips = document.createElement('div');
+  chips.className = 'mana-chips';
+  const keys = Object.keys(groups).sort((a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0]) || a.length - b.length);
+  keys.forEach(k => {
+    const chip = document.createElement('span');
+    chip.className = 'mana-chip';
+    const cols = [...k].map(ch => COLOR_HEX[ch]);
+    chip.style.background = cols.length > 1 ? `linear-gradient(90deg, ${cols.join(', ')})` : cols[0];
+    chip.innerHTML = `<b>${k}</b><span>Lv${groups[k]}</span>`;
+    chips.appendChild(chip);
+  });
+  if (faceDown) {
+    const chip = document.createElement('span');
+    chip.className = 'mana-chip mana-chip-down';
+    chip.innerHTML = `<b>裏</b><span>×${faceDown}</span>`;
+    chips.appendChild(chip);
+  }
+  if (!keys.length && !faceDown) {
+    const none = document.createElement('span');
+    none.className = 'mana-none';
+    none.textContent = 'マリョクなし';
+    chips.appendChild(none);
+  }
+  const cap = document.createElement('div');
+  cap.className = 'mana-cap';
+  cap.innerHTML = `<span class="mana-cap-label">レベル上限</span><span class="mana-cap-num">${total + faceDown}</span>`;
+  const colorsLine = document.createElement('div');
+  colorsLine.className = 'mana-usable';
+  colorsLine.innerHTML = '使える色：' + (usable.size
+    ? [...usable].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)).map(ch => `<i style="background:${COLOR_HEX[ch]}">${ch}</i>`).join('')
+    : 'なし');
+  box.appendChild(cap);
+  box.appendChild(chips);
+  box.appendChild(colorsLine);
+  box.title = manaSummaryTextFrom(total, faceDown, usable);
+  return box;
+}
+function manaSummaryTextFrom(total, faceDown, colors) {
+  return `使用可能な色: ${colors.size ? [...colors].join('') : 'なし'} ／ レベル上限: ${total + faceDown}（表向き合計${total} + 裏向き${faceDown}枚）`;
+}
+
 function checkPlayable(card, reduction = 0) {
   const { levelCap, colors } = getManaInfo();
   const problems = [];
@@ -1445,7 +1502,7 @@ function renderBoard() {
   document.getElementById('cntGrave').textContent = `(${GAME.graveyard.length})`;
   document.getElementById('cntHand').textContent = `(${GAME.hand.length})`;
 
-  document.getElementById('manaSummary').textContent = manaSummaryText();
+  buildManaSummary(document.getElementById('manaSummary'), GAME.mana);
 
   document.getElementById('cntDraw').textContent = `${GAME.resources.drawn}/${GAME.resources.drawLimit}`; //ドロー数カウンタ
 
