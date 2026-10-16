@@ -103,6 +103,8 @@
           let ok;
           if (a.what === 'ガーディアン') ok = !x.faceUp;
           else if (a.what === 'カード') ok = a.back ? !x.faceUp : true;
+          // 円形闘技場が有効な間は、戦場のガーディアンもイジンとして数える（例：武帝「自分の戦場のイジン1体につき」）
+          else if (a.what === 'イジン' && a.zone === '戦場') ok = asIjin(G, o, x) && !(a.trait && !x.faceUp);
           else ok = x.faceUp && c.type === a.what;
           if (ok) n++;
         });
@@ -500,7 +502,13 @@
         const o = ownerIdx(G, inst);
         if (o >= 0 && G.players[1 - o].field.filter(isGuardianInst).length <= 1) return 1;
       }
-      return kwOf(inst).pressure;
+      let need = kwOf(inst).pressure;
+      // 「パワー5000以上の間「ダブルプレッシャー」を得る」（武帝など）：現在のパワーで判定する
+      if (G && inst.faceUp && !inst.silenced) {
+        const m = normTxt(cardOf(inst).rule_text).match(/パワー(\d+)以上の間「(ダブル|トリプル|クアドラプル)プレッシャー」を得る/);
+        if (m && powerOf(inst, G) >= Number(m[1])) need = Math.max(need, PRESSURE[m[2] + 'プレッシャー']);
+      }
+      return need;
     }
 
     function declareAttack(G, pi, uids) {

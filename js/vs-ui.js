@@ -186,7 +186,8 @@
     const k = ENG.kwOf(inst), out = [];
     if (k.haste) out.push('即応');
     if (k.watcher) out.push('ウォッチャー');
-    if (k.pressure > 1) out.push(`圧力×${k.pressure}`);
+    const need = VS.G ? ENG.requiredBlockers(inst, VS.G) : k.pressure;   // 武帝（パワー5000以上）・織田信長などの条件付きも反映
+    if (need > 1) out.push(`圧力×${need}`);
     if (k.mortal) out.push('モータル');
     if (k.noIjinBlock || inst.noIjin) out.push('対イジン不可');
     if (k.attack) out.push(`攻+${k.attack}`);
