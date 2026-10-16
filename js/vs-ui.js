@@ -550,9 +550,24 @@
       t.appendChild(el('span', 'zone-count', `(${P[key].length})`));
       z.appendChild(t);
       if (key === 'mana' && pi === 0) z.appendChild(buildManaSummary(el('div', 'mana-summary'), P.mana));
-      const wrap = el('div', 'zone-cards');
-      P[key].forEach(inst => wrap.appendChild(mini(inst, pi, key)));
-      z.appendChild(wrap);
+      if (key === 'field') {
+        // 戦場は「イジン・ガーディアン」と「ハイケイ」の段に分けて表示する
+        const isHaikei = inst => inst.faceUp && CARDS_BY_ID[inst.cardId].type === 'ハイケイ';
+        const main = el('div', 'zone-cards');
+        P.field.filter(x => !isHaikei(x)).forEach(inst => main.appendChild(mini(inst, pi, key)));
+        const hk = P.field.filter(isHaikei);
+        const hrow = el('div', 'haikei-row' + (hk.length ? '' : ' is-empty'));
+        hrow.appendChild(el('div', 'haikei-row-label', 'ハイケイ'));
+        const hwrap = el('div', 'zone-cards haikei-cards');
+        hk.forEach(inst => hwrap.appendChild(mini(inst, pi, key)));
+        hrow.appendChild(hwrap);
+        // CPU側は上下反転の配置なので、ハイケイ段を相手寄り（上）ではなく外側に置く
+        if (pi === 1) { z.appendChild(hrow); z.appendChild(main); } else { z.appendChild(main); z.appendChild(hrow); }
+      } else {
+        const wrap = el('div', 'zone-cards');
+        P[key].forEach(inst => wrap.appendChild(mini(inst, pi, key)));
+        z.appendChild(wrap);
+      }
       zones.appendChild(z);
     });
     side.appendChild(zones);
@@ -718,7 +733,7 @@
         label: base + (prob.length ? `（不可：${prob[0]}）` : ''),
         disabled: !can || prob.length > 0,
         fn: () => {
-          if (card.type === 'ハイケイ') run(ENG.useHaikei(G, 0, inst.uid));
+          if (card.type === 'ハイケイ') { if (run(ENG.useHaikei(G, 0, inst.uid)).ok) openCardDetail(card.id); }   // イジン召喚と同じく、設置したらカード詳細を表示
           else openPayModal(inst);
         }
       });

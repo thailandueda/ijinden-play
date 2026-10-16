@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#ffd460"/><stop offset=".52" stop-color="#f07a1a"/><stop offset="1" stop-color="#c8321f"/>
+  </linearGradient></defs>
+  <circle cx="32" cy="32" r="29" fill="url(#g)" stroke="#ffe08a" stroke-width="4"/>
+  <text x="32" y="44" text-anchor="middle" font-size="34" font-weight="900" fill="#2a0d05"
+    font-family="'Shippori Mincho','Hiragino Mincho ProN','Yu Mincho','Noto Serif JP',serif">陣</text>
+</svg>

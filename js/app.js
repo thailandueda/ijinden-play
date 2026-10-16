@@ -1486,7 +1486,22 @@ function renderZoneCards(zoneKey, containerId) {
   const arr = zoneArrayOf(zoneKey);
   const container = document.getElementById(containerId);
   container.innerHTML = '';
-  arr.forEach(inst => container.appendChild(createMiniCard(inst, zoneKey)));
+  if (zoneKey !== 'field') { arr.forEach(inst => container.appendChild(createMiniCard(inst, zoneKey))); return; }
+  // 戦場は「イジン・ガーディアン」と「ハイケイ」の段に分けて表示する
+  const isHaikei = inst => inst.faceUp && CARDS_BY_ID[inst.cardId].type === 'ハイケイ';
+  const main = document.createElement('div');
+  main.className = 'zone-cards field-main';
+  arr.filter(x => !isHaikei(x)).forEach(inst => main.appendChild(createMiniCard(inst, zoneKey)));
+  const hk = arr.filter(isHaikei);
+  const row = document.createElement('div');
+  row.className = 'haikei-row' + (hk.length ? '' : ' is-empty');
+  row.innerHTML = '<div class="haikei-row-label">ハイケイ</div>';
+  const hwrap = document.createElement('div');
+  hwrap.className = 'zone-cards haikei-cards';
+  hk.forEach(inst => hwrap.appendChild(createMiniCard(inst, zoneKey)));
+  row.appendChild(hwrap);
+  container.appendChild(main);
+  container.appendChild(row);
 }
 
 function renderBoard() {

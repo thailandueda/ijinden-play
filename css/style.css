@@ -315,3 +315,14 @@ main{ padding:18px; max-width:1500px; margin:0 auto; }
   color:#fff; border:2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.45);
   text-shadow: 0 1px 1px rgba(0,0,0,.4);
 }
+
+/* ===== 戦場のハイケイ段（イジン・ガーディアンと分けて表示） ===== */
+#zoneField{ display:block; }
+.haikei-row{ display:flex; align-items:stretch; gap:8px; margin-top:8px; padding:6px 8px; border-radius:8px;
+  border:1px dashed rgba(120,190,170,.55); background:rgba(70,140,120,.10); }
+.vs-cpu .haikei-row{ margin-top:0; margin-bottom:8px; }
+.haikei-row-label{ writing-mode:vertical-rl; font-size:11px; font-weight:700; letter-spacing:.2em; color:#9fd3c2;
+  padding:2px 0; border-right:1px solid rgba(120,190,170,.35); padding-right:6px; }
+.haikei-row .haikei-cards{ min-height:44px; flex:1; }
+.haikei-row.is-empty{ opacity:.45; }
+.haikei-row.is-empty .haikei-cards{ min-height:28px; }
