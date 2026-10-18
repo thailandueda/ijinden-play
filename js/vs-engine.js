@@ -156,6 +156,8 @@
         }
         if (/イジンが自分の戦場に、?ちょうど2体いる間、自分の戦場のイジンは「ウォッチャー」を得る/.test(t) && F.filter(x => x.faceUp && cardOf(x).type === 'イジン').length === 2) out.watcher = true;
       });
+      const gh = normTxt(cardOf(inst).rule_text).match(/カードが墓地に(\d+)枚以上ある間「即応/);   // レオニダス
+      if (gh && !inst.silenced && G.players[o].grave.length >= Number(gh[1])) out.haste = true;
       const pt = normTxt(cardOf(inst).rule_text).match(/「航海」を持つイジンが自分の戦場にいる間「パワー\+(\d+)」を得る/);
       if (pt && !inst.silenced && F.some(x => x.faceUp && /航海 - /.test(cardOf(x).rule_text || ''))) out.power += Number(pt[1]);
       return out;
@@ -897,6 +899,7 @@
         if (to === 'field') { enterTapped(G, pi, inst); if (inst.faceUp) onIjinPlaced(G, pi, inst); }
         zoneArr(P, to).push(inst);
       }
+      if (from === 'field' && to === 'grave' && inst.faceUp) fieldToGraveLoss(G, pi, inst);
       if (to === 'mana' && inst.faceUp) abilityFx(G, pi, c, 'mana', inst);
       else if (to === 'field' && inst.faceUp && c.type !== 'マリョク') { abilityFx(G, pi, c, 'field', inst); if (c.type === 'ハイケイ') onHaikeiPlaced(G, pi, inst); }
       const label = (G.aiPlayers.has(pi) && !inst.faceUp && from !== 'grave') ? 'カード' : c.name;
@@ -1197,13 +1200,16 @@
       P.hand.push(inst);
       log(G, `　${by}：${nm(G, q)}の${cardOf(inst).name}を手札に戻しました`);
     }
-    function placeToField(G, pi, inst, by) {   // 効果でイジン・ハイケイを戦場に置く（置かれたときの能力も処理する）
+    function placeToField(G, pi, inst, by, fromGrave) {   // 効果でイジン・ハイケイを戦場に置く（置かれたときの能力も処理する）
       const P = G.players[pi], c = cardOf(inst);
+      if (fromGrave === undefined) fromGrave = /反魂|木霊|リバイバル|ダ・ヴィンチ|ドシャカジ|徴募/.test(by || '');
       inst.faceUp = true; inst.tapped = false; inst.isGuardian = false; inst.placedTurn = G.turn;
       P.field.push(inst);
       log(G, `　${by}：${nm(G, pi)}の${c.name}を戦場に置きました`);
       if (c.type === 'イジン') { enterTapped(G, pi, inst); onIjinPlaced(G, pi, inst); }
+      G.cpuTrigCtx = { fromGrave: !!fromGrave };
       abilityFx(G, pi, c, 'field', inst);
+      G.cpuTrigCtx = null;
       if (c.type === 'ハイケイ') onHaikeiPlaced(G, pi, inst);
     }
     // 墓地から戻す候補：レベル6以下のイジン（召喚の点数が高いもの）かレベル5以下のハイケイ
@@ -1891,6 +1897,39 @@
           log(G, '　ファイナルアタック：イジンすべてを起こして、追加でバトルします（このターンのエンドフェイズに敗北）');
         }
       },
+      // ===== 第4弾プリセットのカード =====
+      'フローレンス・ナイチンゲール': {   // 墓地から戦場に置かれたとき：山札の上から1枚を裏のまま戦場に（ガーディアン）
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'field') return false;
+          if (!ctx.fromGrave) return;   // 手札から召喚したときは何も起きない
+          addGuardianFromDeck(G, pi, 'フローレンス・ナイチンゲール');
+        }
+      },
+      'リユニオン': {   // 自分のイジンを手札に戻して、戻した数だけ召喚権+：置かれたときの能力を持つイジンを出し直す
+        timing: 'main',
+        want(G, pi) {
+          const P = G.players[pi], cap = manaInfo(P).cap;
+          const t = P.field.filter(x => isIjinUp(x) && SR.abilityText(cardOf(x), 'field') && (cardOf(x).level || 0) <= cap && !/ゲームに敗北/.test(cardOf(x).rule_text || ''));
+          return t.length ? { uids: t.map(x => x.uid) } : null;
+        },
+        resolve(G, pi, ctx) {
+          const P = G.players[pi], ts = (ctx.target ? ctx.target.uids : []).map(u => P.field.find(x => x.uid === u)).filter(Boolean);
+          if (!ts.length) return false;
+          ts.forEach(x => bounce(G, pi, x, 'リユニオン')); P.summon += ts.length; log(G, `　リユニオン：イジン召喚権+${ts.length}`);
+        }
+      },
+      'ソリッドビジョンδ': { timing: 'main', want(G, pi) { return G.players[pi].hand.length <= 4 && G.players[pi].deck.length > 8 ? {} : null; }, resolve(G, pi) { manualDraw(G, pi, 1, 'ソリッドビジョンδ'); } },
+      'ラ・コロール': {   // 魔力ゾーンに置かれたとき：レベル2以下のイジンを山札の下へ（このターン自分はバトルできない）：アタックしないときに相手の価値の高いイジンへ
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'mana') return false;
+          const t = G.players[1 - pi].field.filter(x => isIjinUp(x) && (cardOf(x).level || 0) <= 2).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
+          if (!t || instValue(G, t) < 2500 || eligibleAttackers(G, pi).length) return 'declined';
+          const O = G.players[1 - pi]; O.field.splice(O.field.indexOf(t), 1); releaseEquips(G, 1 - pi, t); O.deck.unshift(t.cardId);
+          G.noBattle = { turn: G.turn, pi };
+          log(G, `　ラ・コロール：${nm(G, 1 - pi)}の${cardOf(t).name}を山札の下に戻しました（このターン、バトルできない）`);
+        }
+      },
+      'ジョバンニ＝ディ＝メディチ': {},
       // ===== 第3弾プリセットのカード =====
       '浪士集う長屋': {   // メインフェイズ開始時：山札の上から3枚まで墓地へ → 1枚以上:配置権+1、2枚以上:召喚権+1、3枚:1ドロー
         resolve(G, pi, ctx) {
@@ -2172,6 +2211,11 @@
           if (gs.length) log(G, `　効果：${nm(G, q)}のガーディアン${gs.length}体を手札に戻しました`); }); } },
       { re: /^戦場のガーディアンすべてを寝かせる$/, run: (G) => {
         G.players.forEach(P => P.field.filter(isGuardianInst).forEach(g => { g.tapped = true; })); log(G, '　効果：戦場のガーディアンすべてを寝かせました'); guardianTapped(G); } },
+      // 第4弾
+      { re: /^自分の山札の上から1枚を裏のまま魔力ゾーンに置いて、([1-3])ドローする$/, run: (G, pi, m) => {
+        const P = G.players[pi]; if (P.deck.length) { P.mana.push(mkInst(P.deck.pop(), { faceUp: false })); onFaceDownMana(G, pi); }
+        manualDraw(G, pi, Number(m[1]), '効果'); } },
+      { re: /^相手の山札の上から(\d+)枚を墓地に置く$/, run: (G, pi, m) => { millN(G, 1 - pi, Number(m[1]), '効果'); } },
       // 第2弾
       { re: /^自分の魔力ゾーンのマリョクが(\d)つ以上なら発動できる$/, run: () => true },   // 決起の条件（呼び出し側で判定済み）
       { re: /^([1-3])ドローするか、イジン召喚権\+([1-3])する$/, run: (G, pi, m) => {   // 出せるイジンが手札にあれば召喚権、なければドロー
@@ -2244,7 +2288,13 @@
       if (text) abilityFx(G, pi, card, kind, inst, text);
     }
     // 破壊されたとき（自分のカード）＋「相手の戦場のイジンが破壊されるたび」（相手側のカード）
+    // ジョバンニ＝ディ＝メディチ「戦場から墓地に置かれたとき、カードが自分の墓地に5つ以上あるなら、ゲームに敗北する」
+    function fieldToGraveLoss(G, pi, inst) {
+      const m = normTxt(cardOf(inst).rule_text).match(/戦場から墓地に置かれたとき、カードが自分の墓地に(\d+)つ以上あるなら、ゲームに敗北する/);
+      if (m && G.players[pi].grave.includes(inst) && G.players[pi].grave.length >= Number(m[1])) win(G, 1 - pi, `${cardOf(inst).name}の効果（墓地に${G.players[pi].grave.length}枚あるときに戦場から墓地へ）`);
+    }
     function onDestroyed(G, pi, inst) {
+      fieldToGraveLoss(G, pi, inst);
       const P = G.players[pi], t = normTxt(cardOf(inst).rule_text);
       // アリエノール・ダキテーヌ「破壊されたとき、自分の山札の上から2枚を墓地に置いて発動できる。これを破壊されていない状態にする」
       if (G.aiPlayers.has(pi) && /破壊されたとき、自分の山札の上から(\d)枚を墓地に置いて発動できる。これを破壊されていない状態にする/.test(t) && P.deck.length >= 10 && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) {
