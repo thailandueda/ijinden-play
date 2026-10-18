@@ -1224,10 +1224,27 @@
       if (which === 'endPhase') P.mana.filter(x => x.faceUp).slice().forEach(x => { if (re.test(cardOf(x).rule_text || '')) cpuTrigger(G, pi, x, re, which); });
     }
 
+    // カードの色（「これが戦場にある間「色：赤 青 緑」を得る」も含む）
+    const cardColorsOn = (G, x) => {
+      const c = cardOf(x), out = cardOf(x).type === 'イジン' ? COLOR_CHARS.split('').filter(ch => ijinHasColor(G, x, ch)) : colorsOf(c);
+      const m = normTxt(c.rule_text).match(/これが戦場にある間「色：([^」]+)」を得る/);
+      if (m && x.faceUp && !x.silenced) [...m[1]].forEach(ch => { if (COLOR_CHARS.includes(ch) && !out.includes(ch)) out.push(ch); });
+      return out;
+    };
     // 自分の戦場にある色の数（スカーレット・ピーコックなど）
-    const fieldColors = (G, pi) => new Set(G.players[pi].field.filter(x => x.faceUp).flatMap(x => cardOf(x).type === 'イジン' ? COLOR_CHARS.split('').filter(ch => ijinHasColor(G, x, ch)) : colorsOf(cardOf(x)))).size;
+    const fieldColors = (G, pi) => new Set(G.players[pi].field.filter(x => x.faceUp).flatMap(x => cardColorsOn(G, x))).size;
     // 「〇魔導 - 〇のカードが自分の戦場か自分の魔力ゾーンにあるなら」
-    const redOnMine = (G, pi, ch) => G.players[pi].field.concat(G.players[pi].mana).some(x => x.faceUp && String(cardOf(x).color || '').includes(ch));
+    const redOnMine = (G, pi, ch) => G.players[pi].field.some(x => x.faceUp && cardColorsOn(G, x).includes(ch)) || G.players[pi].mana.some(x => x.faceUp && String(cardOf(x).color || '').includes(ch));
+    // 仁王「能力によってこれを数える際、1つでなく2つと数える」
+    const countAs = x => (x.faceUp && /能力によってこれを数える際、1つでなく2つと数える/.test(cardOf(x).rule_text || '') ? 2 : 1);
+
+    // 親鸞「カードが墓地から離れたときに発動できる。1ドローする」（自分の墓地）
+    function graveLeft(G, pi) {
+      if (!G.aiPlayers.has(pi) || (G.cpuNoEffects && G.cpuNoEffects.has(pi))) return;
+      G.players[pi].field.filter(x => x.faceUp && !x.silenced && /カードが墓地から離れたときに発動できる。1ドローする/.test(normTxt(cardOf(x).rule_text))).forEach(x => {
+        if (G.players[pi].deck.length > 5) manualDraw(G, pi, 1, `${cardOf(x).name}（カードが墓地から離れた）`);
+      });
+    }
 
     /* ---------- カードごとの処理（書式だけでは決められない「どれを選ぶか」「いつ使うか」があるもの） ----------
        want(G, pi): 使う価値があれば対象（ctx.target）を返す。timing: 'main'（メイン）| 'preAttack'（アタック宣言の直前）
@@ -1375,7 +1392,7 @@
           if (ctx.kind !== 'shippitsu') return false;
           if (G.battleUsed) return 'declined';
           // 自分のターンは、どうせアタックしない（できない）ときだけ使う（1ドローのため）
-          if (G.current === pi && cpuChooseAttack(G, pi).list.length) return 'declined';
+          if (G.current === pi && (cpuChooseAttack(G, pi).list.length || G.players[pi].deck.length <= 12)) return 'declined';   // 山札切れに注意
           manualDraw(G, G.current, 1, 'ハリエット・ビーチャー・ストウ');
           G.noBattle = { turn: G.turn, pi: G.current };
           log(G, `　ハリエット・ビーチャー・ストウ：${nm(G, G.current)}はこのターン、バトルできません`);
@@ -1464,7 +1481,7 @@
           if (!c || P.grave.length <= keep) return 'declined';
           P.grave.splice(P.grave.indexOf(c), 1); P.deck.unshift(c.cardId);
           log(G, `　親鸞：墓地の${cardOf(c).name}を山札の下に戻しました`);
-          manualDraw(G, pi, 1, '親鸞（カードが墓地から離れた）');
+          graveLeft(G, pi);
         }
       },
       '足利義政': {   // 赤のイジンが自分の戦場に置かれたとき：2ドローかイジン召喚権+2（書式ルールで処理）
@@ -1554,6 +1571,17 @@
         }
       },
       // ----- 第2弾のマホウ -----
+      'チャージ': {   // マリョク配置権+1：置くマリョクがあるとき（紫微垣チャージ：払ったドローマリョクを墓地から置き直す）
+        timing: 'main',
+        want(G, pi) {
+          const P = G.players[pi];
+          if (P.manaPlace > 0 || P.deck.length <= 8) return null;
+          const handMana = P.hand.some(x => cardOf(x).type === 'マリョク');
+          const recycle = shibiReady(G, pi) && (P.grave.some(x => cardOf(x).type === 'マリョク') || P.mana.some(m => m.faceUp && isDrawMana(cardOf(m))));
+          return handMana || recycle ? {} : null;
+        },
+        resolve(G, pi) { G.players[pi].manaPlace += 1; log(G, `　チャージ：${nm(G, pi)}のマリョク配置権+1`); }
+      },
       'メロウ': {   // 戦場のレベル7以下のカードをガーディアンに（裏に）：相手の価値の高いイジン
         timing: 'main',
         want(G, pi) { const f = G.players[1 - pi].field.filter(x => isIjinUp(x) && (cardOf(x).level || 0) <= 7).sort((a, b) => instValue(G, b) - instValue(G, a))[0]; return f && instValue(G, f) >= 5000 ? { uid: f.uid } : null; },
@@ -1571,14 +1599,30 @@
           G.players.forEach((Q, q) => Q.field.filter(isIjinUp).slice().forEach(x => { if (!isIndestructible(G, x)) manualDestroy(G, q, x.uid, 'カタストロフィ'); }));
         }
       },
-      'スカーレット': {   // 自分の戦場の色の数まで、相手のハイケイを破壊（赤魔導：破壊した数だけドロー）
+      'スカーレット': {   // 自分の戦場の色の数まで、戦場のハイケイを破壊（赤魔導：破壊した数だけドロー）
+        // 相手のハイケイを優先。赤魔導が使えるなら、自分のハイケイも壊して大量ドロー（スカーレット執筆）。山札切れには注意
         timing: 'main',
-        want(G, pi) { return G.players[1 - pi].field.some(x => x.faceUp && cardOf(x).type === 'ハイケイ' && !isIndestructible(G, x)) && fieldColors(G, pi) > 0 ? {} : null; },
+        pick(G, pi) {
+          const n = fieldColors(G, pi), red = redOnMine(G, pi, '赤'), P = G.players[pi];
+          const ok = x => x.faceUp && cardOf(x).type === 'ハイケイ' && !isIndestructible(G, x);
+          const foe = G.players[1 - pi].field.filter(ok).map(x => ({ x, q: 1 - pi }));
+          // 自分のハイケイは、遺業能力で戻ってくるもの・数え方が2つのもの（仁王）を優先して壊す
+          const mine = red ? P.field.filter(ok).sort((a, b) => (countAs(b) + (hasLegacy(cardOf(b)) ? 1 : 0)) - (countAs(a) + (hasLegacy(cardOf(a)) ? 1 : 0))).map(x => ({ x, q: pi })) : [];
+          const list = foe.concat(mine).slice(0, n);
+          const draws = red ? list.reduce((t, o) => t + countAs(o.x), 0) : 0;
+          return { list, draws };
+        },
+        want(G, pi) {
+          const { list, draws } = this.pick(G, pi), P = G.players[pi];
+          if (!list.length) return null;
+          const foeHit = list.some(o => o.q !== pi);
+          if (P.deck.length <= draws + 6) return foeHit && !draws ? {} : null;   // 山札切れになりそうなら控える
+          return foeHit || draws >= 2 ? {} : null;
+        },
         resolve(G, pi) {
-          const n = fieldColors(G, pi);
-          const hs = G.players[1 - pi].field.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ' && !isIndestructible(G, x)).slice(0, n);
-          hs.forEach(x => manualDestroy(G, 1 - pi, x.uid, 'スカーレット'));
-          if (hs.length && redOnMine(G, pi, '赤')) manualDraw(G, pi, hs.length, 'スカーレット（赤魔導）');
+          const { list, draws } = this.pick(G, pi);
+          list.forEach(o => manualDestroy(G, o.q, o.x.uid, 'スカーレット'));
+          if (draws) manualDraw(G, pi, draws, 'スカーレット（赤魔導）');
         }
       },
       'ピーコック': {   // 自分の戦場の色の数まで、イジンを寝かせる：それで詰みになるときにアタック直前に使う（青魔導：次のターンも起きない）
@@ -2024,14 +2068,15 @@
       // 地上の紫微垣「自分のマリョク配置において、表で置く限り、ターンに1回だけ自分の墓地のマリョクも選べる」（戦場か墓地で効果）
       const shibi = P.field.concat(P.grave).some(x => x.faceUp && /表で置く限り、ターンに1回だけ自分の墓地のマリョクも選べる/.test(cardOf(x).rule_text || ''));
       const gm = P.grave.filter(x => cardOf(x).type === 'マリョク');
-      if (!manaCards.length && shibi && gm.length && P.shibiTurn !== G.turn && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) {
+      if ((!manaCards.length || gm.some(x => isDrawMana(cardOf(x)))) && shibi && gm.length && P.shibiTurn !== G.turn && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) {
         const need = handNeedColors(P);
-        const sc = i => colorsOf(cardOf(i)).reduce((t, ch) => t + (need[ch] ? 3 + need[ch] : 0), 0) + (cardOf(i).level || 0);
+        const sc = i => colorsOf(cardOf(i)).reduce((t, ch) => t + (need[ch] ? 3 + need[ch] : 0), 0) + (cardOf(i).level || 0) + (isDrawMana(cardOf(i)) ? 10 : 0);
         const best = gm.sort((a, b) => sc(b) - sc(a))[0];
         P.grave.splice(P.grave.indexOf(best), 1); P.hand.push(best); P.shibiTurn = G.turn;
         log(G, '　地上の紫微垣の効果：墓地のマリョクを配置します');
         const r = placeMana(G, pi, best.uid, true);
         if (!r.ok) { P.hand.splice(P.hand.indexOf(best), 1); P.grave.push(best); }
+        else graveLeft(G, pi);
         return r.ok;
       }
       if (manaCards.length) {
@@ -2088,14 +2133,22 @@
     function cpuHaikei(G, pi) {
       const P = G.players[pi];
       const names = new Set(P.field.filter(x => x.faceUp).map(x => cardOf(x).name));
-      const c = P.hand.find(i => cardOf(i).type === 'ハイケイ' && !names.has(cardOf(i).name) && playProblems(G, pi, cardOf(i)).length === 0);
+      const scarlet = P.hand.some(x => cardOf(x).name === 'スカーレット');   // スカーレットで壊して引くための燃料
+      // 「ハイケイが置かれるたび1ドロー」などで山札が切れないように（戦場の執筆のドローを数える）
+      const drawsPerHaikei = G.players.reduce((t, Q) => t + Q.field.filter(x => x.faceUp && /執筆 - [^。]*ドロー/.test(cardOf(x).rule_text || '')).length, 0);
+      if (drawsPerHaikei && P.deck.length <= drawsPerHaikei + 5) return false;
+      const c = P.hand.find(i => cardOf(i).type === 'ハイケイ' && (scarlet || !names.has(cardOf(i).name)) && playProblems(G, pi, cardOf(i)).length === 0);
       return c ? useHaikei(G, pi, c.uid).ok : false;
     }
     /* 魔力コストの払い方：裏向き → 色が重複している表向き → レベルの低い表向き の順に墓地へ */
-    function chooseMahouPay(P, cost) {
+    const isDrawMana = c => c.type === 'マリョク' && /魔力ゾーンに置かれたとき(?:に発動する)?[。、]\s*1ドローする/.test(normTxt(c.rule_text));
+    const shibiReady = (G, pi) => { const P = G.players[pi]; return P.shibiTurn !== G.turn && P.field.concat(P.grave).some(x => x.faceUp && /表で置く限り、ターンに1回だけ自分の墓地のマリョクも選べる/.test(cardOf(x).rule_text || '')); };
+    function chooseMahouPay(P, cost, G, pi) {
       const colorCount = {};
       P.mana.filter(m => m.faceUp).forEach(m => colorsOf(cardOf(m)).forEach(ch => { colorCount[ch] = (colorCount[ch] || 0) + 1; }));
-      const sc = m => (!m.faceUp ? 0 : 10 + (colorsOf(cardOf(m)).some(ch => colorCount[ch] === 1) ? 20 : 0) + (cardOf(m).level || 0));
+      // 紫微垣チャージ：地上の紫微垣で墓地から置き直せるなら、ドローマリョクで払う（置き直してまたドロー）
+      const recycle = G && shibiReady(G, pi);
+      const sc = m => (recycle && m.faceUp && isDrawMana(cardOf(m)) ? -1 : !m.faceUp ? 0 : 10 + (colorsOf(cardOf(m)).some(ch => colorCount[ch] === 1) ? 20 : 0) + (cardOf(m).level || 0));
       return P.mana.slice().sort((a, b) => sc(a) - sc(b)).slice(0, cost).map(m => m.uid);
     }
     function cpuMahou(G, pi, timing) {
@@ -2118,7 +2171,7 @@
         // 魔力ゾーンを払うと、手札のイジンが出せなくなるほど減らさない（詰みを作るアタック直前は気にしない）
         if (timing === 'main' && cost > 0 && P.mana.length - cost < 4 && P.hand.some(x => cardOf(x).type === 'イジン' && cardOf(x).level > manaInfo(P).cap - cost)) continue;
         G.cpuTarget = target;
-        const r = useMahou(G, pi, i.uid, chooseMahouPay(P, cost));
+        const r = useMahou(G, pi, i.uid, chooseMahouPay(P, cost, G, pi));
         G.cpuTarget = null;
         return r.ok;
       }
@@ -2151,7 +2204,7 @@
             G.cpuStage = 'mahou';
             break;
           case 'mahou':
-            if (cpuMahou(G, pi, 'main')) return 'continue';
+            if (cpuMahou(G, pi, 'main')) { if (G.players[pi].manaPlace > 0) G.cpuStage = 'mana'; return 'continue'; }
             G.cpuStage = 'summon2';
             break;
           case 'summon2':   // マホウで召喚権が増えた・ドローした場合にもう一度
