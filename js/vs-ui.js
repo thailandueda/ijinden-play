@@ -877,8 +877,9 @@
         items.push({ label: `装備カードの詳細：${en}`, fn: () => openCardDetail(e.cardId) });
       });
     }
-    if (['mana', 'grave', 'hand'].includes(zone) && visible) {
-      const hosts = G.players[pi].field.filter(x => x.faceUp && CARDS_BY_ID[x.cardId].type === 'イジン');
+    const fieldEquip = zone === 'field' && inst.faceUp && card.type === 'ハイケイ' && /装備させてもよい/.test(card.rule_text || '');   // 安宅船・蒸気機関車など
+    if ((['mana', 'grave', 'hand'].includes(zone) || fieldEquip) && visible) {
+      const hosts = G.players[pi].field.filter(x => x.faceUp && x !== inst && CARDS_BY_ID[x.cardId].type === 'イジン');
       if (hosts.length) items.push({ label: 'イジンに装備させる…', fn: () => showMenu(`「${card.name}」を装備させるイジン`, hosts.map(h => ({
         label: CARDS_BY_ID[h.cardId].name + (h.equips && h.equips.length ? `（装備${h.equips.length}）` : ''),
         fn: () => run(ENG.manualEquip(G, pi, inst.uid, zone, h.uid))

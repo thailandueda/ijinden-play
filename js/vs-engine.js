@@ -347,7 +347,7 @@
         delete e.origin;
         e.faceUp = o.faceUp; e.tapped = false; e.isGuardian = false;
         P[o.zone].push(e);
-        log(G, `　装備していたカード（${cardOf(e).name}）が${{ mana: '魔力ゾーン', grave: '墓地', hand: '手札' }[o.zone]}に戻りました`);
+        log(G, `　装備していたカード（${cardOf(e).name}）が${{ mana: '魔力ゾーン', grave: '墓地', hand: '手札', field: '戦場' }[o.zone]}に戻りました`);
       });
     }
     const hasLegacy = c => !!c.legacy_ability && !['-', '（空欄）', ''].includes(String(c.legacy_ability).trim());
@@ -1139,17 +1139,18 @@
     /* 装備（手動）：自分のカード（魔力ゾーン・墓地・手札）を、戦場の表向きイジンに装備させる。元の場所を覚えておく */
     function manualEquip(G, pi, equipUid, fromZone, hostUid) {
       const P = G.players[pi];
-      const src = ['mana', 'grave', 'hand'].includes(fromZone) ? zoneArr(P, fromZone) : null;
+      const src = ['mana', 'grave', 'hand', 'field'].includes(fromZone) ? zoneArr(P, fromZone) : null;   // field：戦場のハイケイ（安宅船・蒸気機関車など）
       if (!src) return fail('この場所のカードは装備に使えません');
       const i = src.findIndex(x => x.uid === equipUid);
       const host = P.field.find(x => x.uid === hostUid);
       if (i < 0 || !host) return fail('カードが見つかりません');
       if (!host.faceUp || cardOf(host).type !== 'イジン') return fail('装備できるのは戦場の表向きのイジンだけです');
+      if (host.uid === equipUid) return fail('自分自身には装備できません');
       const e = src.splice(i, 1)[0];
       e.origin = { zone: fromZone, faceUp: e.faceUp };
       e.faceUp = true;
       (host.equips = host.equips || []).push(e);
-      log(G, `【手動】${nm(G, pi)}の${cardOf(host).name}に${cardOf(e).name}を装備させました（元の場所：${{ mana: '魔力ゾーン', grave: '墓地', hand: '手札' }[fromZone]}）`);
+      log(G, `【手動】${nm(G, pi)}の${cardOf(host).name}に${cardOf(e).name}を装備させました（元の場所：${{ mana: '魔力ゾーン', grave: '墓地', hand: '手札', field: '戦場' }[fromZone]}）`);
       const m = String(cardOf(e).rule_text || '').match(/装備\s*[:：]([\s\S]*)$/);   // 「装備：」以降の文（アシスト用）
       const body = m ? m[1].replace(/\s+/g, ' ').trim() : '';
       if (body && !body.split(/\s+/).every(t => KW_RE.test(t) || /^特性[:：]/.test(t) || /^「?特性[:：]/.test(t))) abilityFx(G, pi, cardOf(e), 'equip', host, `装備「${cardOf(e).name}」：${body}`);
@@ -1389,9 +1390,9 @@
     // イジンが戦場に置かれたとき、相手の戦場の「イジンが相手の戦場に置かれるたび…」（玄宗）
     function onIjinPlaced(G, pi, inst) {
       if (pillarOn(G)) return;
-      // ガレオン船「「航海」を持つイジンが自分の戦場に置かれたとき、イジン召喚権+1する」（魔力ゾーン）
+      // ガレオン船「「航海」を持つイジンが自分の戦場に置かれたとき、イジン召喚権+1する」（戦場のハイケイ）
       if (G.aiPlayers.has(pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi)) && /航海 - /.test(cardOf(inst).rule_text || ''))
-        G.players[pi].mana.filter(m => m.faceUp && /「航海」を持つイジンが自分の戦場に置かれたとき、イジン召喚権\+1する/.test(cardOf(m).rule_text || '')).forEach(m => { G.players[pi].summon += 1; log(G, `　${cardOf(m).name}：「航海」を持つイジンが置かれたので、イジン召喚権+1`); });
+        G.players[pi].field.filter(m => m.faceUp && !m.silenced && /「航海」を持つイジンが自分の戦場に置かれたとき、イジン召喚権\+1する/.test(cardOf(m).rule_text || '')).forEach(m => { G.players[pi].summon += 1; log(G, `　${cardOf(m).name}：「航海」を持つイジンが置かれたので、イジン召喚権+1`); });
       // 足利義政「赤のイジンが自分の戦場に置かれたときに発動できる」など（自分の戦場のカード）
       G.players[pi].field.forEach(x => {
         if (!G.aiPlayers.has(pi) || !x.faceUp || x.silenced) return;
@@ -1920,7 +1921,7 @@
       '三層の舎利殿': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : ctx.kind === 'endPhase' ? 'declined' : false; } },
       '蒸気機関車': {   // エンドフェイズ開始時：山札の上から2枚を見て、ハイケイを戦場に、残りを手札に
         resolve(G, pi, ctx) {
-          if (ctx.kind === 'mana') return;   // 置いただけでは何も起きない（装備は使わない）
+          if (ctx.kind === 'field') return;   // 置いただけでは何も起きない（装備は使わない）
           if (ctx.kind !== 'endPhase') return false;
           const P = G.players[pi], top = [];
           for (let k = 0; k < 2 && P.deck.length; k++) top.push(mkInst(P.deck.pop()));
@@ -2467,7 +2468,17 @@
           G.extraBattle.n += 1; log(G, '　豊臣秀吉：このターン、追加でバトルできます');
         }
       },
-      'ガレオン船': { resolve(G, pi, ctx) { return ctx.kind === 'mana' ? undefined : false; } },   // 召喚権は onIjinPlaced。装備は使わない
+      'ガレオン船': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },   // 召喚権は onIjinPlaced。装備は使わない
+      '安宅船': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : ctx.kind === 'mainStart' ? 'declined' : false; } },   // イジンを寝かせて召喚権を増やすのは使わない（アタックできなくなる）
+      '黒船': {   // 戦場に置かれたとき：手札1枚を墓地に置いて、相手のハイケイ1つを破壊
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'field') return false;
+          const P = G.players[pi], h = G.players[1 - pi].field.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').filter(notIndestructible(G)).sort((a, b) => (cardOf(b).level || 0) - (cardOf(a).level || 0))[0];
+          const junk = P.hand.slice().sort((a, b) => discardScore(G, pi, b) - discardScore(G, pi, a))[0];
+          if (!h || !junk || (discardScore(G, pi, junk) < 0 && cardUsefulness(G, pi, junk) >= 8)) return 'declined';
+          handToGrave(G, pi, junk); log(G, `　黒船：手札の${cardOf(junk).name}を墓地に置きました`); manualDestroy(G, 1 - pi, h.uid, '黒船');
+        }
+      },
       // ===== 第6弾プリセットのカード =====
       'ヒエロスガモス': {   // 魔力ゾーンに置かれたとき：2ドローして、手札2つを墓地へ（捨てると発動するマホウ・ペリーを選ぶ）
         resolve(G, pi, ctx) { if (ctx.kind !== 'mana') return false; manualDraw(G, pi, 2, 'ヒエロスガモス'); discardSmart(G, pi, 2, 'ヒエロスガモス'); }
