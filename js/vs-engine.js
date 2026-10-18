@@ -1876,7 +1876,15 @@
           if (ctx.kind !== 'field') return false;
           const P = G.players[pi], n = manaInfo(P).colors.size;
           const mill = c => /相手の山札の上から\d枚を墓地に置/.test(normTxt(cardOf(c).rule_text)) ? 2 : 0;
-          const ms = P.grave.filter(x => cardOf(x).type === 'マホウ').sort((a, b) => (mill(b) + (CARD_AI[cardOf(b).name] ? 1 : 0)) - (mill(a) + (CARD_AI[cardOf(a).name] ? 1 : 0))).slice(0, n);
+          const loop = c => (rikyuDeck(G, pi) && rikyuOn(G, pi) ? Math.max(0, 10 - RIKYU_LOOP.indexOf(cardOf(c).name)) * (RIKYU_LOOP.includes(cardOf(c).name) ? 1 : 0) : 0);   // 利休ループで使うマホウを優先
+          let ms = P.grave.filter(x => cardOf(x).type === 'マホウ').sort((a, b) => (loop(b) + mill(b) + (CARD_AI[cardOf(b).name] ? 1 : 0)) - (loop(a) + mill(a) + (CARD_AI[cardOf(a).name] ? 1 : 0)));
+          if (rikyuDeck(G, pi) && rikyuOn(G, pi)) {   // 利休ループ：ドシャカジ・グラトニーは手札に1枚あればよい。残りは魔力レベルを上げるΩ・チャージに回す
+            const pick = [], seen = {};
+            P.hand.forEach(x => { if (['ドシャカジ', 'グラトニー'].includes(cardOf(x).name)) seen[cardOf(x).name] = 1; });
+            ms.forEach(x => { const k = cardOf(x).name; if (pick.length < n && !(['ドシャカジ', 'グラトニー'].includes(k) && seen[k])) { pick.push(x); seen[k] = 1; } });
+            ms.forEach(x => { if (pick.length < n && !pick.includes(x) && !['ドシャカジ', 'グラトニー'].includes(cardOf(x).name)) pick.push(x); });
+            ms = pick;
+          } else ms = ms.slice(0, n);
           ms.forEach(x => { P.grave.splice(P.grave.indexOf(x), 1); x.faceUp = true; P.hand.push(x); });
           log(G, `　藤原道長：墓地のマホウ${ms.length}枚（${ms.map(x => cardOf(x).name).join('、') || 'なし'}）を手札に戻しました`);
         }
@@ -2212,7 +2220,9 @@
         resolve(G, pi) {
           millN(G, pi, 5, 'ドシャカジ');
           const P = G.players[pi], cap = manaInfo(P).cap;
-          const c = P.grave.filter(x => ['イジン', 'ハイケイ'].includes(cardOf(x).type) && (cardOf(x).level || 0) <= cap)
+          const ok = x => ['イジン', 'ハイケイ'].includes(cardOf(x).type) && (cardOf(x).level || 0) <= cap;
+          const pref = (G.cpuTarget && G.cpuTarget.prefer || []).map(n => P.grave.find(x => ok(x) && cardOf(x).name === n)).find(Boolean);   // 利休ループ：藤原道長／エイブラハム・リンカン
+          const c = pref || P.grave.filter(ok)
             .sort((a, b) => (cardOf(b).type === 'イジン' ? ijinScore(G, pi, cardOf(b)) : 3000) - (cardOf(a).type === 'イジン' ? ijinScore(G, pi, cardOf(a)) : 3000))[0];
           if (c) { P.grave.splice(P.grave.indexOf(c), 1); placeToField(G, pi, c, 'ドシャカジ'); }
         }
@@ -2521,9 +2531,11 @@
           return t && top >= 3 ? { uid: t.x.uid } : null;
         },
         resolve(G, pi, ctx) {
-          const O = G.players[1 - pi], t = ctx.target && O.field.find(x => x.uid === ctx.target.uid);
+          const q = ctx.target && G.players[pi].field.some(x => x.uid === ctx.target.uid) ? pi : 1 - pi;
+          const t = ctx.target && G.players[q].field.find(x => x.uid === ctx.target.uid);
           if (!t) return false;
-          bounce(G, 1 - pi, t, 'グラトニー');
+          if (cardOf(t).type === 'イジン') bounce(G, q, t, 'グラトニー');
+          else { const Q = G.players[q]; Q.field.splice(Q.field.indexOf(t), 1); t.tapped = false; Q.hand.push(t); log(G, `　グラトニー：${nm(G, q)}の${cardOf(t).name}を手札に戻しました`); }
         }
       },
       'ピースメーカー': {   // 自分のイジンかガーディアン1体と、相手の戦場のカード1つを破壊
@@ -3403,11 +3415,79 @@
       return pool.slice().sort((a, b) => sc(a) - sc(b)).slice(0, cost).map(m => m.uid);
     }
     const rikyuOn = (G, pi) => !!fieldSrc(G, pi, /自分はマホウ使用に際し、自分の手札をすきなだけ墓地に置いてもよい。墓地に置いた1枚につき、手札のマホウの魔力コストは1減る/);
+    /* 利休ループ（利休エンビー）：千利休の「手札を墓地に置いてマホウのコストを下げる」で、マリョクを使わずにマホウを回す。
+       藤原道長（墓地のマホウを手札へ）→ グラトニー（道長を手札へ）→ ドシャカジ（道長を捨ててコスト0、5枚削って墓地の道長を戦場へ）→ … の繰り返しで、
+       ソリッドビジョンΩ（裏で魔力ゾーンへ）とチャージで魔力レベルを上げ、レベル9でドシャカジからエイブラハム・リンカンを出す */
+    const RIKYU_LOOP = ['ドシャカジ', 'グラトニー', 'ソリッドビジョンΩ', 'チャージ', 'ロイヤリティ', 'エンビー'];
+    const RIKYU_KEEP = ['千利休', '藤原道長', 'エイブラハム・リンカン', '精霊の島々'].concat(RIKYU_LOOP);
+    // 利休ループで捨ててよいカード（捨てると発動するもの → 部品でないもの → 2枚目以降の部品）
+    function rikyuSpares(G, pi, inst, prefer) {
+      const P = G.players[pi], others = P.hand.filter(x => x !== inst);
+      const toss = (prefer || []).filter(x => others.includes(x));
+      const fire = others.filter(x => !toss.includes(x) && discardScore(G, pi, x) >= 90);
+      // 手札に2枚目以上ある部品（ドシャカジ・グラトニー・千利休など）や、戦場にすでにある精霊の島々も捨ててよい
+      const spare = x => { const k = cardOf(x).name; if (!RIKYU_KEEP.includes(k)) return true; if (['ソリッドビジョンΩ', 'チャージ', 'ロイヤリティ', 'エンビー'].includes(k)) return k !== cardOf(inst).name && others.filter(y => cardOf(y).name === k).indexOf(x) > 0;   // 2枚目以降は捨ててよい
+        if ((k === '千利休' || k === '精霊の島々') && P.field.some(y => y.faceUp && cardOf(y).name === k)) return true;
+        return others.filter(y => cardOf(y).name === k).indexOf(x) > 0 || (k === cardOf(inst).name); };
+      const junk = others.filter(x => !toss.includes(x) && !fire.includes(x) && spare(x))
+        .sort((a, b) => (cardOf(a).type === 'マリョク' ? 5 : 0) - (cardOf(b).type === 'マリョク' ? 5 : 0) || cardUsefulness(G, pi, a) - cardUsefulness(G, pi, b));
+      return toss.concat(fire, junk);
+    }
+    function rikyuCast(G, pi, inst, target, prefer, noMana) {
+      const P = G.players[pi], c = cardOf(inst), base = c.magic_cost || 0;
+      if (conditionProblems(P, c, 0, G).length || pillarMahouBan(G, pi) || P.noMahouTurn === G.turn || P.noHandTurn === G.turn) return false;
+      const list = rikyuSpares(G, pi, inst, prefer).slice(0, base);
+      const rest = base - list.length;
+      if (rest > 0 && (noMana || P.mana.length - rest < 2 || (luther(G, pi) && P.mana.filter(m => m.faceUp).length < rest))) return false;
+      if (list.length) { log(G, `　千利休：${c.name}の使用に際し、手札の${list.map(x => cardOf(x).name).join('、')}を墓地に置いて魔力コストを${list.length}減らします`); list.forEach(x => handToGrave(G, pi, x)); }
+      P.costCut = { turn: G.turn, name: c.name, n: list.length };
+      if (!P.hand.includes(inst)) return true;
+      G.cpuTarget = target || {};
+      const r = useMahou(G, pi, inst.uid, chooseMahouPay(P, mahouCost(G, pi, c), G, pi));
+      G.cpuTarget = null;
+      return r.ok;
+    }
+    // 利休ループのデッキか（藤原道長とドシャカジが入っている）
+    const rikyuDeck = (G, pi) => { const P = G.players[pi]; if (P.rikyuDeck === undefined) { const ns = new Set(P.deck.map(id => cardsById[id].name).concat(P.hand.map(x => cardOf(x).name), P.field.map(x => cardOf(x).name), P.grave.map(x => cardOf(x).name), P.mana.map(x => cardOf(x).name))); P.rikyuDeck = ns.has('藤原道長') && ns.has('ドシャカジ') && ns.has('千利休'); } return P.rikyuDeck; };
+    function rikyuLoopStep(G, pi) {
+      const P = G.players[pi];
+      if (!rikyuDeck(G, pi) || !rikyuOn(G, pi) || (G.cpuNoEffects && G.cpuNoEffects.has(pi))) return false;
+      const cnt = G.rlTurn === G.turn ? G.rlCnt : 0; if (cnt >= 40) return false; G.rlTurn = G.turn; G.rlCnt = cnt + 1;
+      // 精霊の島々（戦場か墓地）があれば、山札が0枚になっても手札を山札に戻せる（相手の手札も墓地へ）ので、山札を掘り切ってよい
+      const islands = P.field.concat(P.grave).some(x => x.faceUp && /自分の山札のカードが0枚になったときに戦場か墓地で発動できる/.test(cardOf(x).rule_text || ''));
+      const hand = n => P.hand.find(x => cardOf(x).name === n), cap = manaInfo(P).cap, res = islands ? -4 : deckReserve(G, pi);
+      const michi = P.field.find(x => x.faceUp && cardOf(x).name === '藤原道長');
+      const dosha = hand('ドシャカジ'), glut = hand('グラトニー');
+      const top = Math.max(0, ...[0, 1].flatMap(q => G.players[q].field.filter(x => x.faceUp && cardOf(x).type !== 'マリョク').map(x => cardOf(x).level || 0)));
+      const lincolnReady = cap >= 9 && P.grave.some(x => cardOf(x).name === 'エイブラハム・リンカン') && !P.field.some(x => x.faceUp && cardOf(x).name === 'エイブラハム・リンカン');
+      // 1) レベル9：ドシャカジで墓地のリンカンを出す
+      if (dosha && lincolnReady && P.deck.length >= 5 + 1 && rikyuCast(G, pi, dosha, { prefer: ['エイブラハム・リンカン'] })) return true;
+      // 2) 魔力レベルを上げる：ソリッドビジョンΩ（1ドローして裏で魔力ゾーンへ）・チャージ（置くカードがあるとき）。コストは手札を捨てて払う
+      const om = hand('ソリッドビジョンΩ');
+      if (om && cap < 9 && P.deck.length > res + 2 && redOnMine(G, pi, '緑') && rikyuCast(G, pi, om, {}, [], true)) return true;
+      const ch = hand('チャージ');
+      const chSp = ch && rikyuSpares(G, pi, ch);
+      if (ch && cap < 9 && P.manaPlace < 1 && (chSp.length >= 2 || (chSp.length && discardScore(G, pi, chSp[0]) >= 90)) && rikyuCast(G, pi, ch, {}, [], true)) return true;   // 1枚はコスト、1枚は置く用（捨てたエンビーで引くならそれでもよい）   // 1枚はコスト、1枚は置く用
+      // 戦場の道長をグラトニーで手札へ（次のドシャカジで捨てて、墓地から出し直す）
+      const lincolnInDeck = P.deck.some(id => cardsById[id].name === 'エイブラハム・リンカン');
+      const gainNext = (P.grave.some(x => ['ソリッドビジョンΩ', 'チャージ'].includes(cardOf(x).name)) && cap < 9) || lincolnInDeck;   // 道長を出し直して得るものがあるか
+      if (michi && glut && dosha && cap >= (cardOf(dosha).level || 5) && gainNext && (cardOf(michi).level || 0) >= top && P.deck.length >= 5 + res && !noBounce(G) &&
+        rikyuCast(G, pi, glut, { uid: michi.uid })) return true;
+      // 3) 手札の道長を捨ててドシャカジ：墓地の道長を戦場へ（墓地のマホウを回収）
+      const mh = hand('藤原道長');
+      if (dosha && (mh || P.grave.some(x => cardOf(x).name === '藤原道長')) && !michi && cap >= 5 && P.deck.length >= 5 + res &&
+        rikyuCast(G, pi, dosha, { prefer: ['藤原道長'] }, mh ? [mh] : [])) return true;
+      // 6) ロイヤリティ：ガーディアンを山札の上に戻して3ドロー
+      const ro = hand('ロイヤリティ');
+      if (ro && myGuards(G, pi).length >= 2 && P.deck.length > res + 4 && P.hand.length <= 6 && rikyuCast(G, pi, ro, {})) return true;
+      return false;
+    }
     function cpuMahou(G, pi, timing) {
       const P = G.players[pi];
       for (const i of P.hand.slice()) {
         const c = cardOf(i);
         if (c.type !== 'マホウ' || !P.hand.includes(i)) continue;
+        if (rikyuDeck(G, pi) && rikyuOn(G, pi) && ['ソリッドビジョンΩ', 'チャージ', 'ドシャカジ', 'グラトニー'].includes(c.name) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) continue;   // 利休ループの部品は rikyuLoopStep で（マリョクを使わずに）使う
         // 千利休：捨てると得をするカード（ペリー・払暁の城壁で冥府発動）や、コストが足りない分の不要なカードを墓地に置いて軽くする
         if (rikyuOn(G, pi) && (c.magic_cost || 0) > 0 && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) {
           const h0 = CARD_AI[c.name];
@@ -3486,6 +3566,7 @@
             G.cpuStage = 'mahou';
             break;
           case 'mahou':
+            if (rikyuLoopStep(G, pi)) { if (G.players[pi].manaPlace > 0) G.cpuStage = 'mana'; return 'continue'; }
             if (cpuMahou(G, pi, 'main')) { if (G.players[pi].manaPlace > 0) G.cpuStage = 'mana'; return 'continue'; }
             G.cpuStage = 'summon2';
             break;
