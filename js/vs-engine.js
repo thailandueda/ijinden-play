@@ -1774,7 +1774,7 @@
       const P = G.players[pi], inst = P.grave.find(x => x.uid === uid);
       if (!inst) return true;   // すでに墓地を離れている（他の効果で動いた）ので、何もしない
       const c = cardOf(inst), t = normTxt(c.legacy_ability);
-      const take = () => { P.grave.splice(P.grave.indexOf(inst), 1); inst.tapped = false; inst.isGuardian = false; };
+      const take = () => { P.grave.splice(P.grave.indexOf(inst), 1); inst.tapped = false; inst.isGuardian = false; graveLeft(G, pi); };   // 墓地から離れる → 親鸞
       let what = '', m;
       if (/魔力化/.test(t)) { take(); inst.faceUp = false; P.mana.push(inst); what = '魔力化（魔力ゾーンに裏向きで置く）'; }
       else if (/復元/.test(t)) { take(); inst.faceUp = true; P.mana.push(inst); what = '復元（魔力ゾーンに表向きで置く）'; }
@@ -2137,7 +2137,11 @@
       // 「ハイケイが置かれるたび1ドロー」などで山札が切れないように（戦場の執筆のドローを数える）
       const drawsPerHaikei = G.players.reduce((t, Q) => t + Q.field.filter(x => x.faceUp && /執筆 - [^。]*ドロー/.test(cardOf(x).rule_text || '')).length, 0);
       if (drawsPerHaikei && P.deck.length <= drawsPerHaikei + 5) return false;
-      const c = P.hand.find(i => cardOf(i).type === 'ハイケイ' && (scarlet || !names.has(cardOf(i).name)) && playProblems(G, pi, cardOf(i)).length === 0);
+      // 置く順番：配置権が増える（巨大古墳）・2つと数える（仁王）・色が増えるハイケイを先に、回収系（茅葺き屋根など）は最後に
+      const prio = i => { const t = normTxt(cardOf(i).rule_text);
+        return (/マリョク配置権\+1/.test(t) ? 30 : 0) + (/2つと数える/.test(t) ? 20 : 0) + (/「色：[^」]+」を得る/.test(t) ? 10 : 0) - (/手札に戻して発動できる/.test(t) ? 40 : 0); };
+      const c = P.hand.filter(i => cardOf(i).type === 'ハイケイ' && (scarlet || !names.has(cardOf(i).name)) && playProblems(G, pi, cardOf(i)).length === 0)
+        .sort((a, b) => prio(b) - prio(a))[0];
       return c ? useHaikei(G, pi, c.uid).ok : false;
     }
     /* 魔力コストの払い方：裏向き → 色が重複している表向き → レベルの低い表向き の順に墓地へ */
