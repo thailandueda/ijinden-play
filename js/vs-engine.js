@@ -1961,7 +1961,7 @@
         }
       },
       '英傑集う大河': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },   // 色の付与はエンジン、3体アタックへの対応は cpuOnAttack
-      '籠城戦': { resolve(G, pi, ctx) { return ctx.kind === 'mana' ? undefined : false; } },         // 反魂の代わりは cpuLegacy、決起は onManaPlaced
+      '籠城戦': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },         // 反魂の代わりは cpuLegacy、決起は onManaPlaced
       '遠征軍': {
         resolve(G, pi, ctx) {
           if (ctx.kind === 'field') return;
