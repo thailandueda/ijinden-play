@@ -155,11 +155,18 @@
       if (!text) return;
       const auto = onlyText ? false
         : kind === 'mana' ? autoManaFromDeck(G, pi, card, text)
-        : (kind === 'mahou' && G.aiPlayers.has(pi)) ? cpuResolve(G, pi, card, text)   // CPUのマホウは、書式の決まった効果なら自動処理
-        : false;
-      G.fx.push({ type: 'ability', pi, kind, cardId: card.id, name: card.name, text, uid: inst ? inst.uid : null, auto });
-      if (!auto) log(G, `　${card.name}の能力：${text.replace(/\n/g, ' ')}（自動処理されません）`);
+        : staticOnly(card, text);   // 常在能力（パワー補正）やハイケイのレベル条件だけなら、エンジンが自動で計算している
+      const autoCpu = !auto && !onlyText && G.aiPlayers.has(pi) && ['field', 'mana', 'mahou'].includes(kind) && cpuResolve(G, pi, card, text, { inst, kind });   // CPUのカード効果（読める書式・対応済みカードだけ）
+      G.fx.push({ type: 'ability', pi, kind, cardId: card.id, name: card.name, text, uid: inst ? inst.uid : null, auto: auto || autoCpu });
+      if (!auto && !autoCpu) log(G, `　${card.name}の能力：${text.replace(/\n/g, ' ')}（自動処理されません）`);
     };
+    /* 能力の文がすべて「エンジンが自動で計算するもの」（パワーの常在能力・ハイケイのレベル条件）か */
+    function staticOnly(card, text) {
+      if (card.type === 'マホウ') return false;
+      const sents = normTxt(text).replace(/（[^）]*）/g, '').split(/[。\n]+/).map(x => x.trim()).filter(Boolean);
+      return sents.length > 0 && sents.every((x, i) => /^これのハイケイ使用に際し、自分の戦場に「[^」]+」イジンがいれば、これはレベル\d+になる$/.test(x) ||
+        aurasOf({ id: `__line_${card.id}_${i}`, rule_text: x }).length > 0);
+    }
     /* 自動処理：「魔力ゾーンに置かれたとき、自分の山札の上から1枚（カード2つ）を裏のまま魔力ゾーンに置く。」（〇〇の種・キャビネットなど）
        任意（発動できる）や選択式（〜するか）の能力は対象外。山札が足りなければ置ける分だけ置く */
     const KNUM = { '1': 1, '2': 2, '3': 3, '１': 1, '２': 2, '３': 3, '一': 1, '二': 2, '三': 3 };
@@ -357,9 +364,16 @@
     }
 
     /* 色条件: カードの持つ色すべてが、表向きマリョクの色にあること（複数色カードの扱いはここで調整できます） */
+    /* 「これのハイケイ使用に際し、自分の戦場に「剣術」イジンがいれば、これはレベル1になる」（連なる天守閣など） */
+    function haikeiLevel(P, card) {
+      const m = normTxt(card.rule_text).match(/これのハイケイ使用に際し、自分の戦場に「([^」]+)」イジンがいれば、これはレベル(\d+)になる/);
+      if (!m) return null;
+      return P.field.some(x => x.faceUp && !x.silenced && cardOf(x).type === 'イジン' && hasTrait(cardOf(x), m[1])) ? Number(m[2]) : null;
+    }
     function conditionProblems(P, card, red) {
       const { cap, colors } = manaInfo(P);
-      const lv = SR.effectiveLevel(card.level, red);
+      const hl = card.type === 'ハイケイ' ? haikeiLevel(P, card) : null;
+      const lv = hl !== null ? Math.min(hl, card.level) : SR.effectiveLevel(card.level, red);
       const p = [];
       if (lv > cap) p.push(red ? `レベル条件（Lv${card.level}→軽減後${lv} > 上限${cap}）` : `レベル条件（Lv${card.level} > 上限${cap}）`);
       const lack = colorsOf(card).filter(ch => !colors.has(ch));
@@ -674,6 +688,7 @@
         if (d.length) log(G, `バトルの結果、${nm(G, p)}の${d.map(x => x.name).join('、')}は破壊されて墓地へ`);
       });
       (winnerReason ? [] : legacyFx).forEach(f => {   // 勝敗が決まったバトルでは遺業能力を処理しない
+        if (G.aiPlayers.has(f.pi) && cpuLegacy(G, f.pi, f.uid)) return;   // CPUの遺業能力は、読めるものなら自動処理
         G.fx.push(f);
         log(G, `遺業能力発動！ ${nm(G, f.pi)}の${f.name}：${f.text}（自動処理されません。手動で処理してください）`);
       });
@@ -715,7 +730,7 @@
       return { ok: true };
     }
     /* 戦場のカードを破壊して墓地へ（遺業能力があれば遺業フェーズの対象になる） */
-    function manualDestroy(G, pi, uid) {
+    function manualDestroy(G, pi, uid, by) {
       const P = G.players[pi];
       const i = P.field.findIndex(x => x.uid === uid);
       if (i < 0) return fail('カードが見つかりません');
@@ -724,9 +739,9 @@
       releaseEquips(G, pi, inst);
       inst.faceUp = true; inst.tapped = false; inst.isGuardian = false; inst.silenced = false; inst.indestructible = false;
       P.grave.push(inst);
-      log(G, `【手動】${nm(G, pi)}の${c.name}を破壊して墓地へ` + (hasLegacy(c) ? '　※遺業能力あり' : ''));
+      log(G, `${by ? '　' + by + '：' : '【手動】'}${nm(G, pi)}の${c.name}を破壊して墓地へ` + (hasLegacy(c) ? '　※遺業能力あり' : ''));
       G.fx.push({ type: 'destroy', pi, manual: true, items: [{ name: c.name, cardId: c.id }] });
-      if (hasLegacy(c)) G.fx.push({ type: 'legacy', pi, uid: inst.uid, name: c.name, cardId: c.id, text: String(c.legacy_ability).trim() });
+      if (hasLegacy(c) && !(G.aiPlayers.has(pi) && cpuLegacy(G, pi, inst.uid))) G.fx.push({ type: 'legacy', pi, uid: inst.uid, name: c.name, cardId: c.id, text: String(c.legacy_ability).trim() });
       return { ok: true };
     }
     function manualTap(G, pi, uid) {
@@ -745,12 +760,12 @@
       log(G, `【手動】${nm(G, pi)}の${inst.faceUp ? cardOf(inst).name : 'カード'}を${inst.faceUp ? '表' : '裏'}にしました`);
       return { ok: true };
     }
-    function manualDraw(G, pi, n) {
+    function manualDraw(G, pi, n, by) {
       const P = G.players[pi];
       let k = 0;
       for (let i = 0; i < n && P.deck.length; i++) { P.hand.push(mkInst(P.deck.pop())); k++; }
       if (k > 0) G.fx.push({ type: 'draw', pi, n: k });
-      log(G, `【手動】${nm(G, pi)}が${k}枚ドロー（山札残り${P.deck.length}枚）`);
+      log(G, `${by ? '　' + by + '：' : '【手動】'}${nm(G, pi)}が${k}枚ドロー（山札残り${P.deck.length}枚）`);
       return { ok: true };
     }
     /* 山札の上から1枚を、裏向きのガーディアンとして戦場に置く */
@@ -947,21 +962,109 @@
       return declareBlocks(G, defIdx, cpuChooseBlocks(G, defIdx));
     }
 
+    /* ---------- カードごとの処理（書式だけでは決められない「どれを選ぶか」「いつ使うか」があるもの） ----------
+       want(G, pi): 使う価値があれば対象（ctx.target）を返す。timing: 'main'（メイン）| 'preAttack'（アタック宣言の直前）
+       resolve(G, pi, ctx): 効果を処理する（ctx.target は want が返したもの） */
+    const notIndestructible = G => x => !isIndestructible(G, x);
+    const CARD_AI = {
+      // 自分のイジン1体と相手のイジン1体を破壊：価値の低い自分のイジンで、価値の高い相手のイジンを取る
+      'バレット': {
+        timing: 'main',
+        want(G, pi) {
+          const mine = G.players[pi].field.filter(isIjinUp).filter(notIndestructible(G)).sort((a, b) => instValue(G, a) - instValue(G, b));
+          const foe = G.players[1 - pi].field.filter(isIjinUp).filter(notIndestructible(G)).sort((a, b) => instValue(G, b) - instValue(G, a));
+          if (!mine.length || !foe.length) return null;
+          return instValue(G, foe[0]) - instValue(G, mine[0]) >= 1500 ? { mine: mine[0].uid, foe: foe[0].uid } : null;
+        },
+        resolve(G, pi, ctx) {
+          const t = ctx.target; if (!t) return false;
+          manualDestroy(G, pi, t.mine, 'バレット'); manualDestroy(G, 1 - pi, t.foe, 'バレット');
+        }
+      },
+      // このターン「イジンにブロックされない」を与える：それで相手がブロックしきれなくなる（詰み）ときだけ使う
+      'チャンピオン': {
+        timing: 'preAttack',
+        want(G, pi) {
+          if (G.battleUsed) return null;
+          const E = eligibleAttackers(G, pi), oppB = eligibleBlockers(G, 1 - pi);
+          if (!E.length || !coverable(G, asAtk(G, E), oppB)) return null;   // すでに詰みなら不要
+          for (const a of E.filter(x => x.faceUp && !x.noIjin).sort((x, y) => requiredBlockers(y, G) - requiredBlockers(x, G))) {
+            a.noIjin = true;
+            const lethal = !coverable(G, asAtk(G, E), oppB);
+            a.noIjin = false;
+            if (lethal) return { att: a.uid };
+          }
+          return null;
+        },
+        resolve(G, pi, ctx) {
+          const a = ctx.target && G.players[pi].field.find(x => x.uid === ctx.target.att); if (!a) return false;
+          a.noIjin = true;
+          log(G, `　チャンピオン：${cardOf(a).name}はこのターン「イジンにブロックされない」`);
+        }
+      },
+    };
+
+    /* CPUの遺業能力（戦場から墓地に置かれたとき）。読めるものだけ処理して true を返す */
+    function cpuLegacy(G, pi, uid) {
+      const P = G.players[pi], inst = P.grave.find(x => x.uid === uid);
+      if (!inst) return false;
+      const c = cardOf(inst), t = normTxt(c.legacy_ability);
+      const take = () => { P.grave.splice(P.grave.indexOf(inst), 1); inst.tapped = false; inst.isGuardian = false; };
+      let what = '', m;
+      if (/魔力化/.test(t)) { take(); inst.faceUp = false; P.mana.push(inst); what = '魔力化（魔力ゾーンに裏向きで置く）'; }
+      else if (/復元/.test(t)) { take(); inst.faceUp = true; P.mana.push(inst); what = '復元（魔力ゾーンに表向きで置く）'; }
+      else if ((m = t.match(/([1-3])ドローする/))) { manualDraw(G, pi, Number(m[1]), '遺業能力'); what = `${m[1]}ドロー`; }
+      else if (/これを手札に戻す/.test(t)) { take(); inst.faceUp = true; P.hand.push(inst); what = '手札に戻す'; }
+      else if (/冥府発動/.test(t) && c.type === 'マホウ') {
+        // 冥府発動：マホウコストを払わずにこのマホウを発動できる（使う価値がなければ発動しない）
+        const h = CARD_AI[c.name], text = SR.abilityText(c, 'mahou') || '';
+        if (h && h.want) {
+          const target = h.want(G, pi);
+          if (!target) { log(G, `　遺業能力（CPU）：${c.name}の冥府発動は、使う価値がないので発動しません`); return true; }
+          log(G, `　遺業能力（CPUが自動処理）：${nm(G, pi)}の${c.name} → 冥府発動`);
+          h.resolve(G, pi, { target });
+        } else if (effectPlan(text)) { log(G, `　遺業能力（CPUが自動処理）：${nm(G, pi)}の${c.name} → 冥府発動`); cpuResolve(G, pi, c, text, {}); }
+        else return false;
+        G.fx.push({ type: 'ability', pi, kind: 'legacy', cardId: c.id, name: `${c.name}（遺業）`, text: '冥府発動', uid: inst.uid, auto: true });
+        return true;
+      }
+      else return false;
+      log(G, `　遺業能力（CPUが自動処理）：${nm(G, pi)}の${c.name} → ${what}`);
+      G.fx.push({ type: 'ability', pi, kind: 'legacy', cardId: c.id, name: `${c.name}（遺業）`, text: what, uid: inst.uid, auto: true });
+      if (/復元/.test(t)) abilityFx(G, pi, c, 'mana', inst);   // 表向きで魔力ゾーンに置かれたときの能力
+      return true;
+    }
+
     /* ---------- カード効果の自動処理（CPU用）。文を「。」で区切り、すべての文が既知の書式なら処理する ---------- */
     const EFFECT_RULES = [
-      { re: /^(?:自分は)?([1-3１-３一二三])ドローする$/, run: (G, pi, m) => { manualDraw(G, pi, KNUM[m[1]]); } },
-      { re: /^イジン召喚権\+([1-3])する$/, run: (G, pi, m) => { G.players[pi].summon += Number(m[1]); } },
-      { re: /^マリョク配置権\+([1-3])する$/, run: (G, pi, m) => { G.players[pi].manaPlace += Number(m[1]); } },
+      { re: /^(?:自分は)?([1-3１-３一二三])ドローする$/, run: (G, pi, m) => { manualDraw(G, pi, KNUM[m[1]], '効果'); } },
+      { re: /^イジン召喚権\+([1-3])する$/, run: (G, pi, m) => { G.players[pi].summon += Number(m[1]); log(G, `　効果：${nm(G, pi)}のイジン召喚権+${m[1]}`); } },
+      { re: /^マリョク配置権\+([1-3])する$/, run: (G, pi, m) => { G.players[pi].manaPlace += Number(m[1]); log(G, `　効果：${nm(G, pi)}のマリョク配置権+${m[1]}`); } },
       { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を裏のまま魔力ゾーンに置く$/, run: (G, pi, m) => {
         const P = G.players[pi]; for (let k = 0; k < KNUM[m[1]] && P.deck.length; k++) P.mana.push(mkInst(P.deck.pop(), { faceUp: false })); } },
       { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を(?:裏向きの)?ガーディアン(?:にして|として)戦場に置く$/, run: (G, pi, m) => {
         for (let k = 0; k < KNUM[m[1]]; k++) manualGuardianFromDeck(G, pi); } },
+      { re: /^自分の戦場のガーディアン([1-3])体を山札の上に戻す$/, run: (G, pi, m) => {
+        const P = G.players[pi];
+        for (let k = 0; k < Number(m[1]); k++) {
+          const g = P.field.filter(isGuardianInst).sort((a, b) => (a.tapped ? 0 : 1) - (b.tapped ? 0 : 1))[0];   // 寝ているガーディアンから戻す
+          if (!g) break;
+          P.field.splice(P.field.indexOf(g), 1); P.deck.push(g.cardId);
+          log(G, `　${nm(G, pi)}のガーディアン1体を山札の上に戻しました（残りのガーディアン${P.field.filter(isGuardianInst).length}体）`);
+        } } },
+      { re: /^これのパワー以下のパワーを持つ相手の戦場のイジン1体を破壊する$/, run: (G, pi, m, ctx) => {
+        const lim = ctx.inst ? powerOf(ctx.inst, G) : 0;
+        const t = G.players[1 - pi].field.filter(x => isIjinUp(x) && powerOf(x, G) <= lim && !isIndestructible(G, x)).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
+        if (t) manualDestroy(G, 1 - pi, t.uid, '効果'); else log(G, '　破壊できる相手のイジンがいません'); } },
       { re: /^相手の戦場のパワー(\d+)以下のイジン1体を破壊する$/, run: (G, pi, m) => {
         const t = G.players[1 - pi].field.filter(x => isIjinUp(x) && powerOf(x, G) <= Number(m[1]) && !isIndestructible(G, x)).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
-        if (t) manualDestroy(G, 1 - pi, t.uid); },
+        if (t) manualDestroy(G, 1 - pi, t.uid, '効果'); },
         ok: (G, pi, m) => G.players[1 - pi].field.some(x => isIjinUp(x) && powerOf(x, G) <= Number(m[1]) && !isIndestructible(G, x)) },
     ];
-    const effectSentences = text => normTxt(text).replace(/（[^）]*）/g, '').split(/[。\n]+/).map(s => s.trim()).filter(Boolean);
+    // 「戦場に置かれたとき、」「魔力ゾーンに置かれたとき、」などの誘発の書き出しは、呼び出し側（どのタイミングで呼ばれたか）で判定済みなので外す
+    const TRIG_PREFIX = /^(?:この能力は、?)?(?:これが)?(?:マリョク配置によって)?(?:魔力ゾーン|戦場)に置かれたとき(?:に発動する)?、/;
+    const TRIG_ONLY = /^(?:この能力は、?)?(?:これが)?(?:マリョク配置によって)?(?:魔力ゾーン|戦場)に置かれたときに発動する$/;   // 「この能力は、これが〜に置かれたときに発動する。」だけの文
+    const effectSentences = text => normTxt(text).replace(/（[^）]*）/g, '').split(/[。\n]+/).map(s => s.trim().replace(TRIG_PREFIX, '')).filter(s => s && !TRIG_ONLY.test(s));
     /* 能力テキストをCPUが自動処理できるか（できるなら、その文ごとの処理を返す） */
     function effectPlan(text) {
       const sents = effectSentences(text);
@@ -974,11 +1077,14 @@
       }
       return plan;
     }
-    function cpuResolve(G, pi, card, text) {
+    function cpuResolve(G, pi, card, text, ctx) {
+      ctx = Object.assign({ target: G.cpuTarget }, ctx || {});
+      const h = CARD_AI[card.name];
+      if (h && h.resolve && h.resolve(G, pi, ctx) !== false) { log(G, `　${card.name}の能力をCPUが自動処理しました`); return true; }
       const plan = effectPlan(text);
       if (!plan) return false;
-      plan.forEach(({ r, m }) => r.run(G, pi, m));
-      log(G, `　${card.name}の能力をCPUが自動処理しました`);
+      log(G, `　${card.name}の能力をCPUが自動処理します`);
+      plan.forEach(({ r, m }) => r.run(G, pi, m, ctx));
       return true;
     }
 
@@ -1014,8 +1120,16 @@
 
     /* ---------- 召喚・ハイケイ・マホウの選び方 ---------- */
     function ijinScore(G, pi, c) {
-      const k = parseCard(c);
-      return cardValue(c) + (k.pressure - 1) * 1500 + (k.haste ? 800 : 0) + (k.watcher ? 400 : 0) + (k.noIjinBlock ? 800 : 0);
+      const k = parseCard(c), P = G.players[pi];
+      const t = normTxt(SR.abilityText(c, 'field') || '');
+      let s = cardValue(c) + (k.pressure - 1) * 1500 + (k.haste ? 800 : 0) + (k.watcher ? 400 : 0) + (k.noIjinBlock ? 800 : 0);
+      // 置かれたときの効果を見込む
+      if (/自分の戦場のガーディアン\d体を山札の上に戻す/.test(t)) s -= P.field.filter(isGuardianInst).length <= 2 ? 4000 : 1000;
+      if (/イジン召喚権\+\d/.test(t) && P.hand.filter(x => cardOf(x).type === 'イジン').length >= 2) s += 2500;
+      if (/これのパワー以下のパワーを持つ相手の戦場のイジン1体を破壊/.test(t) &&
+        G.players[1 - pi].field.some(x => isIjinUp(x) && powerOf(x, G) <= (c.power || 0))) s += 3000;
+      if (/ドローする/.test(t)) s += 800;
+      return s;
     }
     function cpuSummon(G, pi) {
       const P = G.players[pi];
@@ -1038,17 +1152,29 @@
       const sc = m => (!m.faceUp ? 0 : 10 + (colorsOf(cardOf(m)).some(ch => colorCount[ch] === 1) ? 20 : 0) + (cardOf(m).level || 0));
       return P.mana.slice().sort((a, b) => sc(a) - sc(b)).slice(0, cost).map(m => m.uid);
     }
-    function cpuMahou(G, pi) {
+    function cpuMahou(G, pi, timing) {
       const P = G.players[pi];
       for (const i of P.hand) {
         const c = cardOf(i);
         if (c.type !== 'マホウ' || playProblems(G, pi, c).length) continue;
-        const plan = effectPlan(SR.abilityText(c, 'mahou') || '');
-        if (!plan || plan.some(p => p.r.ok && !p.r.ok(G, pi, p.m))) continue;   // 自動処理できない／対象がいない
+        const h = CARD_AI[c.name];
+        let target = null;
+        if (h && h.want) {
+          if ((h.timing || 'main') !== timing) continue;
+          target = h.want(G, pi);
+          if (!target) continue;
+        } else {
+          if (timing !== 'main') continue;
+          const plan = effectPlan(SR.abilityText(c, 'mahou') || '');
+          if (!plan || plan.some(p => p.r.ok && !p.r.ok(G, pi, p.m))) continue;   // 自動処理できない／対象がいない
+        }
         const cost = c.magic_cost || 0;
-        // 魔力ゾーンを払うと、手札のイジンが出せなくなるほど減らさない（魔力ゾーンが5枚以上あれば気にしない）
-        if (cost > 0 && P.mana.length - cost < 4 && P.hand.some(x => cardOf(x).type === 'イジン' && cardOf(x).level > manaInfo(P).cap - cost)) continue;
-        return useMahou(G, pi, i.uid, chooseMahouPay(P, cost)).ok;
+        // 魔力ゾーンを払うと、手札のイジンが出せなくなるほど減らさない（詰みを作るアタック直前は気にしない）
+        if (timing === 'main' && cost > 0 && P.mana.length - cost < 4 && P.hand.some(x => cardOf(x).type === 'イジン' && cardOf(x).level > manaInfo(P).cap - cost)) continue;
+        G.cpuTarget = target;
+        const r = useMahou(G, pi, i.uid, chooseMahouPay(P, cost));
+        G.cpuTarget = null;
+        return r.ok;
       }
       return false;
     }
@@ -1075,7 +1201,7 @@
             G.cpuStage = 'mahou';
             break;
           case 'mahou':
-            if (cpuMahou(G, pi)) return 'continue';
+            if (cpuMahou(G, pi, 'main')) return 'continue';
             G.cpuStage = 'summon2';
             break;
           case 'summon2':   // マホウで召喚権が増えた・ドローした場合にもう一度
@@ -1083,6 +1209,7 @@
             G.cpuStage = 'attack';
             break;
           case 'attack': {
+            if (!G.battleUsed && cpuMahou(G, pi, 'preAttack')) return 'continue';   // チャンピオンなど、アタックの直前に使うマホウ
             G.cpuStage = 'after';
             if (G.battleUsed || G.winner !== null) break;
             const { list, why } = cpuChooseAttack(G, pi);

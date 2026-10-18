@@ -128,6 +128,57 @@
     if (VS.G.current === 1) runCpu();
   });
 
+  /* ---------- CPU同士で100戦（デッキ評価）。画面が固まらないよう、少しずつ進める ---------- */
+  $('vsSim').addEventListener('click', () => {
+    const my = $('vsMyDeck').value, cpu = $('vsCpuDeck').value || my;
+    const A = getDeckByKey(my), B = getDeckByKey(cpu);
+    if (!A || !B) { alert('デッキを選んでください'); return; }
+    const total = d => Object.values(d.cards).reduce((a, b) => a + b, 0);
+    if (total(A) < 10 || total(B) < 10) { alert('10枚以上のデッキが必要です'); return; }
+    const N = 100, SIM = IjindenEngine.create(CARDS_BY_ID);
+    const st = { done: 0, aWin: 0, bWin: 0, draw: 0, aFirstWin: 0, aFirst: 0, aSecondWin: 0, aSecond: 0, turns: [], reasons: {}, auto: [0, 0], unproc: [0, 0], err: 0 };
+    const box = $('vsSimResult'), btns = [$('vsSim'), $('vsStart')];
+    btns.forEach(b => { b.disabled = true; });
+    box.hidden = false;
+    const nameA = (A.name || '').replace(/^★/, ''), nameB = (B.name || '').replace(/^★/, '');
+    const one = g => {
+      const aSeat = g % 2, first = Math.floor(g / 2) % 2;   // 席と先攻を均等に入れ替える
+      const decks = aSeat === 0 ? [A, B] : [B, A];
+      const G = SIM.newGame(decks[0].cards, decks[1].cards, first, [0, 1]);
+      let steps = 0;
+      while (G.winner === null && G.turn <= 120 && steps++ < 20000) { const r = SIM.cpuStep(G); if (r === 'idle' || r === 'await_block') break; }
+      const aFirst = first === aSeat;
+      if (aFirst) st.aFirst++; else st.aSecond++;
+      if (G.winner === null) st.draw++;
+      else if (G.winner === aSeat) { st.aWin++; if (aFirst) st.aFirstWin++; else st.aSecondWin++; }
+      else st.bWin++;
+      st.turns.push(G.turn);
+      const rs = G.winner === null ? '120ターンで決着せず' : /山札が0枚/.test(G.winReason) ? '山札切れ' : /防げなかった/.test(G.winReason) ? 'アタックを防げず' : 'その他';
+      st.reasons[rs] = (st.reasons[rs] || 0) + 1;
+      G.fx.forEach(f => { if (f.type === 'ability' || f.type === 'legacy') { const side = f.pi === aSeat ? 0 : 1; if (f.auto) st.auto[side]++; else st.unproc[side]++; } });
+    };
+    const pct = (a, b) => (b ? Math.round(100 * a / b) : 0) + '%';
+    const show = fin => {
+      const t = st.turns.slice().sort((a, b) => a - b);
+      const rate = side => pct(st.auto[side], st.auto[side] + st.unproc[side]);
+      box.innerHTML = `<div class="sim-title">${fin ? '結果' : '対戦中…'}（${st.done}/${N}戦）</div>` +
+        `<div class="sim-vs"><b>${nameA}</b> ${st.aWin}勝 ／ <b>${nameB}</b> ${st.bWin}勝` + (st.draw ? ` ／ 引き分け${st.draw}` : '') + `</div>` +
+        `<div class="sim-bar"><span style="width:${st.done ? 100 * st.aWin / st.done : 0}%"></span></div>` +
+        `<div class="sim-line">${nameA}の勝率 <b>${pct(st.aWin, st.done)}</b>（先攻 ${pct(st.aFirstWin, st.aFirst)} ／ 後攻 ${pct(st.aSecondWin, st.aSecond)}）</div>` +
+        (t.length ? `<div class="sim-line">決着までのターン数：中央 ${t[t.length >> 1]}（最短 ${t[0]}・最長 ${t[t.length - 1]}）</div>` : '') +
+        `<div class="sim-line">決着の理由：${Object.entries(st.reasons).map(([k, v]) => `${k} ${v}`).join(' ／ ')}</div>` +
+        `<div class="sim-note">CPUが自動処理できた能力：${nameA} ${rate(0)} ／ ${nameB} ${rate(1)}。処理できない効果は「何も起きない」扱いなので、この割合が低いデッキの結果は参考程度にしてください。</div>`;
+    };
+    const step = () => {
+      for (let k = 0; k < 4 && st.done < N; k++, st.done++) { try { one(st.done); } catch (e) { st.err++; console.error(e); } }
+      show(st.done >= N);
+      if (st.done < N) setTimeout(step, 0);
+      else btns.forEach(b => { b.disabled = false; });
+    };
+    show(false);
+    setTimeout(step, 30);
+  });
+
   function endGame() {
     if (VS.G && VS.G.winner === null && !confirm('対戦を終了して準備画面に戻りますか？')) return;
     VS.G = null; VS.busy = false;

@@ -189,3 +189,12 @@
 
 /* 処理済みの効果ボタン */
 .btn.is-used{ opacity:.6; cursor:default; border-style:dashed; }
+
+/* ===== CPU同士で100戦（デッキ評価） ===== */
+.sim-btn{ margin-top:8px; }
+.sim-result{ margin-top:10px; padding:10px 12px; border-radius:8px; background:var(--bg-panel-raise, rgba(0,0,0,.25)); border:1px solid rgba(230,200,105,.35); font-size:13px; line-height:1.6; }
+.sim-title{ font-weight:800; color:var(--gold-bright, #ffd460); margin-bottom:4px; }
+.sim-vs{ font-size:15px; }
+.sim-bar{ height:8px; border-radius:4px; background:rgba(255,255,255,.12); overflow:hidden; margin:6px 0; }
+.sim-bar span{ display:block; height:100%; background:linear-gradient(90deg, #f07a1a, #ffd460); }
+.sim-note{ font-size:11.5px; color:#bba98c; margin-top:4px; }

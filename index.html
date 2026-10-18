@@ -225,7 +225,9 @@
       </div>
     </div>
     <button class="btn btn-primary btn-block" id="vsStart">対戦開始</button>
-    <p class="hint-text">CPUは合法手をランダムに選びます。カード効果は自動処理されないので、手動調整メニューやカード詳細を見ながら進めてください。</p>
+    <button class="btn btn-ghost btn-block sim-btn" id="vsSim">CPU同士で100戦（デッキ評価）</button>
+    <div class="sim-result" id="vsSimResult" hidden></div>
+    <p class="hint-text">CPUは詰み・安全なアタック・守りの数を計算して動きます。CPUのカード効果は、対応済みの書式・カードだけ自動処理します。あなたのカード効果は自動処理されないので、手動調整メニューやカード詳細を見ながら進めてください。</p>
   </div>
   <div class="board" id="vsBoard" style="display:none;"></div>
 </section>
