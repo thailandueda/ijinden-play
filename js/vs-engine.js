@@ -345,6 +345,14 @@
         log(G, `${nm(G, pi)}は1枚ドロー（山札残り${P.deck.length}枚）`);
       }
       G.phase = 'main';
+      // 大日本沿海輿地全図「自分のメインフェイズが開始したとき、ハイケイの名前が戦場に6つ以上あるなら発動する。ゲームに勝利する」
+      const yochi = P.field.find(x => x.faceUp && !x.silenced && /自分のメインフェイズが開始したとき、ハイケイの名前が戦場に(\d+)つ以上あるなら発動する。ゲームに勝利する/.test(normTxt(cardOf(x).rule_text)));
+      if (yochi) {
+        const need = Number(normTxt(cardOf(yochi).rule_text).match(/ハイケイの名前が戦場に(\d+)つ以上/)[1]);
+        const names = new Set(G.players.flatMap(Q => Q.field.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').map(x => cardOf(x).name)));
+        log(G, `　${cardOf(yochi).name}：戦場のハイケイの名前は${names.size}種類（${need}種類以上で勝利）`);
+        if (names.size >= need) { win(G, pi, `${cardOf(yochi).name}の効果（ハイケイの名前が戦場に${names.size}種類）`); return; }
+      }
       G.battleUsed = false;
       G.battle = null;
       G.cpuStage = G.aiPlayers.has(pi) ? 'start' : null;
@@ -459,14 +467,19 @@
 
     /* 色条件: カードの持つ色すべてが、表向きマリョクの色にあること（複数色カードの扱いはここで調整できます） */
     /* 「これのハイケイ使用に際し、自分の戦場に「剣術」イジンがいれば、これはレベル1になる」（連なる天守閣など） */
-    function haikeiLevel(P, card) {
+    function haikeiLevel(P, card, G) {
+      // 大日本沿海輿地全図「これのレベルは、戦場のハイケイのレベルの合計と同じだけ下がる」
+      if (G && /これのハイケイ使用に際し、これのレベルは、戦場のハイケイのレベルの合計と同じだけ下がる/.test(normTxt(card.rule_text))) {
+        const sum = G.players.reduce((t, Q) => t + Q.field.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').reduce((u, x) => u + (cardOf(x).level || 0), 0), 0);
+        return Math.max(0, (card.level || 0) - sum);
+      }
       const m = normTxt(card.rule_text).match(/これのハイケイ使用に際し、自分の戦場に「([^」]+)」イジンがいれば、これはレベル(\d+)になる/);
       if (!m) return null;
       return P.field.some(x => x.faceUp && !x.silenced && cardOf(x).type === 'イジン' && hasTrait(cardOf(x), m[1])) ? Number(m[2]) : null;
     }
-    function conditionProblems(P, card, red) {
+    function conditionProblems(P, card, red, G) {
       const { cap, colors } = manaInfo(P);
-      const hl = card.type === 'ハイケイ' ? haikeiLevel(P, card) : null;
+      const hl = card.type === 'ハイケイ' ? haikeiLevel(P, card, G) : null;
       const lv = hl !== null ? Math.min(hl, card.level) : SR.effectiveLevel(card.level, red);
       const p = [];
       if (lv > cap) p.push(red ? `レベル条件（Lv${card.level}→軽減後${lv} > 上限${cap}）` : `レベル条件（Lv${card.level} > 上限${cap}）`);
@@ -497,7 +510,7 @@
     function playProblems(G, pi, card, extra) {
       const P = G.players[pi];
       const red = card.type === 'イジン' ? summonInfo(G, pi, card).auto + (extra || 0) : 0;
-      const p = conditionProblems(P, card, red);
+      const p = conditionProblems(P, card, red, G);
       if (card.type === 'イジン' && P.summon < 1) p.push('イジン召喚権なし');
       if (card.type === 'マホウ') {
         const cost = mahouCost(G, pi, card);
@@ -1238,6 +1251,14 @@
     // 仁王「能力によってこれを数える際、1つでなく2つと数える」
     const countAs = x => (x.faceUp && /能力によってこれを数える際、1つでなく2つと数える/.test(cardOf(x).rule_text || '') ? 2 : 1);
 
+    // 大日本沿海輿地全図で勝つ準備：戦場のハイケイの名前の数、輿地全図が自分の戦場にあり条件を満たしているか
+    const YOCHI_RE = /ハイケイの名前が戦場に(\d+)つ以上あるなら発動する。ゲームに勝利する/;
+    const haikeiNames = G => new Set(G.players.flatMap(Q => Q.field.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').map(x => cardOf(x).name)));
+    const yochiPlan = (G, pi) => { const P = G.players[pi]; return P.hand.concat(P.field).concat(P.mana.filter(m => !m.faceUp)).some(x => YOCHI_RE.test(normTxt(cardOf(x).rule_text))) || P.deck.some(id => YOCHI_RE.test(normTxt(cardsById[id].rule_text))); };
+    const winSetup = (G, pi) => { const y = G.players[pi].field.find(x => x.faceUp && !x.silenced && YOCHI_RE.test(normTxt(cardOf(x).rule_text))); return !!y && haikeiNames(G).size >= Number(normTxt(cardOf(y).rule_text).match(YOCHI_RE)[1]); };
+    // 山札をどこまで引いてよいか（次の自分のターン開始時に山札が0枚だと負け。勝ちが決まっているなら1枚残せばよい）
+    const deckReserve = (G, pi) => (winSetup(G, pi) ? 1 : 6);
+
     // 親鸞「カードが墓地から離れたときに発動できる。1ドローする」（自分の墓地）
     function graveLeft(G, pi) {
       if (!G.aiPlayers.has(pi) || (G.cpuNoEffects && G.cpuNoEffects.has(pi))) return;
@@ -1375,9 +1396,19 @@
           manualDestroy(G, pi, t.uid, '楊貴妃'); manualDraw(G, pi, 3, '楊貴妃');
         }
       },
-      '清少納言': {   // 戦場に置かれたとき：自分のマリョクと同じ色の相手のイジンを裏にして（持ち主の）魔力ゾーンへ。執筆は使わない
+      '清少納言': {   // 戦場に置かれたとき：自分のマリョクと同じ色の相手のイジンを裏にして（持ち主の）魔力ゾーンへ。執筆：相手の魔力ゾーンのカードを手札に戻す（マリョクを縛る）
         resolve(G, pi, ctx) {
-          if (ctx.kind === 'shippitsu') return 'declined';
+          if (ctx.kind === 'shippitsu') {
+            const O = G.players[1 - pi];
+            const cnt = {}; O.mana.filter(m => m.faceUp).forEach(m => colorsOf(cardOf(m)).forEach(ch => { cnt[ch] = (cnt[ch] || 0) + 1; }));
+            const t = O.mana.slice().sort((a, b) => {
+              const sc = m => (m.faceUp ? 10 + (colorsOf(cardOf(m)).some(ch => cnt[ch] === 1) ? 10 : 0) + (cardOf(m).level || 0) : 0);
+              return sc(b) - sc(a); })[0];
+            if (!t) return 'declined';
+            O.mana.splice(O.mana.indexOf(t), 1); t.faceUp = true; O.hand.push(t);
+            log(G, `　清少納言（執筆）：${nm(G, 1 - pi)}の魔力ゾーンのカード1つを手札に戻しました（残り${O.mana.length}枚）`);
+            return;
+          }
           if (ctx.kind !== 'field') return false;
           const cols = manaInfo(G.players[pi]).colors, O = G.players[1 - pi];
           const t = O.field.filter(x => isIjinUp(x) && colorsOf(cardOf(x)).some(ch => cols.has(ch))).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
@@ -1392,7 +1423,7 @@
           if (ctx.kind !== 'shippitsu') return false;
           if (G.battleUsed) return 'declined';
           // 自分のターンは、どうせアタックしない（できない）ときだけ使う（1ドローのため）
-          if (G.current === pi && (cpuChooseAttack(G, pi).list.length || G.players[pi].deck.length <= 12)) return 'declined';   // 山札切れに注意
+          if (G.current === pi && (cpuChooseAttack(G, pi).list.length || G.players[pi].deck.length <= deckReserve(G, pi) + 1)) return 'declined';   // 山札切れに注意
           manualDraw(G, G.current, 1, 'ハリエット・ビーチャー・ストウ');
           G.noBattle = { turn: G.turn, pi: G.current };
           log(G, `　ハリエット・ビーチャー・ストウ：${nm(G, G.current)}はこのターン、バトルできません`);
@@ -1497,6 +1528,17 @@
       },
       '英傑集う大河': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },   // 色の付与はエンジン、3体アタックへの対応は cpuOnAttack
       '籠城戦': { resolve(G, pi, ctx) { return ctx.kind === 'mana' ? undefined : false; } },         // 反魂の代わりは cpuLegacy、決起は onManaPlaced
+      '遠征軍': {
+        resolve(G, pi, ctx) {
+          if (ctx.kind === 'field') return;
+          if (ctx.kind !== 'endPhase') return false;
+          const P = G.players[pi];
+          if (P.deck.length >= 1 || !ctx.inst || !P.field.includes(ctx.inst)) return 'declined';
+          P.field.splice(P.field.indexOf(ctx.inst), 1); P.deck.push(ctx.inst.cardId);
+          log(G, '　遠征軍：山札が0枚なので、これを山札の上に戻しました');
+        }
+      },
+      '大日本沿海輿地全図': { resolve(G, pi, ctx) { return ctx.kind === 'field' || ctx.kind === 'mainStart' ? undefined : false; } },   // 勝利判定はエンジン（メインフェイズ開始時）
       '仁王': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },
       '地上の紫微垣': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },
       '茅葺き屋根の張出し舞台': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? 'declined' : false; } },
@@ -1607,7 +1649,11 @@
           const ok = x => x.faceUp && cardOf(x).type === 'ハイケイ' && !isIndestructible(G, x);
           const foe = G.players[1 - pi].field.filter(ok).map(x => ({ x, q: 1 - pi }));
           // 自分のハイケイは、遺業能力で戻ってくるもの・数え方が2つのもの（仁王）を優先して壊す
-          const mine = red ? P.field.filter(ok).sort((a, b) => (countAs(b) + (hasLegacy(cardOf(b)) ? 1 : 0)) - (countAs(a) + (hasLegacy(cardOf(a)) ? 1 : 0))).map(x => ({ x, q: pi })) : [];
+          // 大日本沿海輿地全図で勝つデッキでは、名前が1枚しかないハイケイは壊さない（名前の数を減らさない）。輿地全図自身も壊さない
+          const plan = yochiPlan(G, pi);
+          const nameCount = n2 => P.field.filter(y => y.faceUp && cardOf(y).name === n2).length;
+          const keepIt = x => plan && (nameCount(cardOf(x).name) <= 1 || YOCHI_RE.test(normTxt(cardOf(x).rule_text)));
+          const mine = red ? P.field.filter(ok).filter(x => !keepIt(x)).sort((a, b) => (countAs(b) + (hasLegacy(cardOf(b)) ? 1 : 0)) - (countAs(a) + (hasLegacy(cardOf(a)) ? 1 : 0))).map(x => ({ x, q: pi })) : [];
           const list = foe.concat(mine).slice(0, n);
           const draws = red ? list.reduce((t, o) => t + countAs(o.x), 0) : 0;
           return { list, draws };
@@ -1616,7 +1662,7 @@
           const { list, draws } = this.pick(G, pi), P = G.players[pi];
           if (!list.length) return null;
           const foeHit = list.some(o => o.q !== pi);
-          if (P.deck.length <= draws + 6) return foeHit && !draws ? {} : null;   // 山札切れになりそうなら控える
+          if (P.deck.length <= draws + deckReserve(G, pi)) return foeHit && !draws ? {} : null;   // 山札切れになりそうなら控える
           return foeHit || draws >= 2 ? {} : null;
         },
         resolve(G, pi) {
@@ -1780,7 +1826,7 @@
       else if (/復元/.test(t)) { take(); inst.faceUp = true; P.mana.push(inst); what = '復元（魔力ゾーンに表向きで置く）'; }
       else if ((m = t.match(/([1-3])ドローする/))) { manualDraw(G, pi, Number(m[1]), '遺業能力'); what = `${m[1]}ドロー`; }
       else if (/これを手札に戻す/.test(t)) { take(); inst.faceUp = true; P.hand.push(inst); what = '手札に戻す'; }
-      else if (/これを山札の上か下に戻す/.test(t)) { take(); P.deck.push(inst.cardId); what = '山札の上に戻す'; }
+      else if (/山札の上か下に戻す/.test(t)) { take(); P.deck.push(inst.cardId); what = '山札の上に戻す'; }
       else if (/喪神/.test(t)) { what = '喪神（バトルは終わっているので効果なし）'; }
       else if (/反魂/.test(t) && c.type === 'イジン') {
         // 反魂：自分のガーディアン1体を山札の下に戻して、これを戦場に置く（籠城戦が墓地にあれば代わりに使える）
@@ -2136,10 +2182,12 @@
       const scarlet = P.hand.some(x => cardOf(x).name === 'スカーレット');   // スカーレットで壊して引くための燃料
       // 「ハイケイが置かれるたび1ドロー」などで山札が切れないように（戦場の執筆のドローを数える）
       const drawsPerHaikei = G.players.reduce((t, Q) => t + Q.field.filter(x => x.faceUp && /執筆 - [^。]*ドロー/.test(cardOf(x).rule_text || '')).length, 0);
-      if (drawsPerHaikei && P.deck.length <= drawsPerHaikei + 5) return false;
+      if (drawsPerHaikei && P.deck.length <= drawsPerHaikei + deckReserve(G, pi) - 1) return false;
       // 置く順番：配置権が増える（巨大古墳）・2つと数える（仁王）・色が増えるハイケイを先に、回収系（茅葺き屋根など）は最後に
+      const plan = yochiPlan(G, pi), bfNames = haikeiNames(G);
       const prio = i => { const t = normTxt(cardOf(i).rule_text);
-        return (/マリョク配置権\+1/.test(t) ? 30 : 0) + (/2つと数える/.test(t) ? 20 : 0) + (/「色：[^」]+」を得る/.test(t) ? 10 : 0) - (/手札に戻して発動できる/.test(t) ? 40 : 0); };
+        return (YOCHI_RE.test(t) ? 100 : 0) + (plan && !bfNames.has(cardOf(i).name) ? 25 : 0) +
+          (/マリョク配置権\+1/.test(t) ? 30 : 0) + (/2つと数える/.test(t) ? 20 : 0) + (/「色：[^」]+」を得る/.test(t) ? 10 : 0) - (/手札に戻して発動できる/.test(t) ? 40 : 0); };
       const c = P.hand.filter(i => cardOf(i).type === 'ハイケイ' && (scarlet || !names.has(cardOf(i).name)) && playProblems(G, pi, cardOf(i)).length === 0)
         .sort((a, b) => prio(b) - prio(a))[0];
       return c ? useHaikei(G, pi, c.uid).ok : false;
