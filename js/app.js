@@ -1137,7 +1137,22 @@ function doManaPlace(uid, faceUp) {
   if (GAME.resources.manaPlace < 1) { log('マリョク配置権がありません'); return; }
   GAME.resources.manaPlace -= 1;
   moveInstance(uid, 'hand', 'mana', { faceUp });
-  if (faceUp) announceAbility(CARDS_BY_ID[(GAME.mana.find(x => x.uid === uid) || {}).cardId] || {}, 'mana');
+  if (faceUp) {
+    const card = CARDS_BY_ID[(GAME.mana.find(x => x.uid === uid) || {}).cardId] || {};
+    if (!soloAutoManaFromDeck(card)) announceAbility(card, 'mana');
+  }
+}
+/* 自動処理：「魔力ゾーンに置かれたとき、自分の山札の上から1枚（カード2つ）を裏のまま魔力ゾーンに置く。」（〇〇の種・キャビネットなど） */
+function soloAutoManaFromDeck(card) {
+  const text = String(IjindenSummon.abilityText(card, 'mana') || '').replace(/＋/g, '+');
+  const m = text.match(/自分の山札の上から(?:カード)?([123１２３一二三])(?:枚|つ)を裏のまま魔力ゾーンに置く/);
+  if (!m || /発動できる|するか/.test(text)) return false;
+  const n = { '1': 1, '2': 2, '3': 3, '１': 1, '２': 2, '３': 3, '一': 1, '二': 2, '三': 3 }[m[1]];
+  let k = 0;
+  for (; k < n && GAME.deck.length; k++) GAME.mana.push({ uid: uidCounter++, cardId: GAME.deck.pop(), faceUp: false, tapped: false });
+  showToast(`${card.name}の能力`, { variant: 'ability', sub: '自動処理：' + text, ms: 2200 });
+  log(`　${card.name}の能力（自動処理）：山札の上から${k}枚を裏のまま魔力ゾーンに置きました（山札残り${GAME.deck.length}枚）` + (k < n ? '　※山札が足りません' : ''));
+  return true;
 }
 /*
 function doSummon(uid) {

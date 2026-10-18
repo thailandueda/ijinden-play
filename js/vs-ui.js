@@ -224,8 +224,9 @@
       } else if (f.type === 'nodestroy') {
         schedule(1600, () => showToast('バトルの結果、破壊されたカードはありません', { variant: 'long', ms: 1600 }));
       } else if (f.type === 'ability') {
-        schedule(1500, () => showToast(`${whose(f.pi)}${f.name}の能力`, { variant: 'ability', ms: 1500 }));
-        if (f.text) VS.assist.push({ pi: f.pi, uid: f.uid, cardId: f.cardId, name: f.name, text: f.text, kind: f.kind });
+        // 自動処理した能力はトーストで知らせるだけ（効果アシストのバナーには出さない）
+        schedule(f.auto ? 1900 : 1500, () => showToast(`${whose(f.pi)}${f.name}の能力`, { variant: 'ability', sub: f.auto ? '自動処理：' + f.text : undefined, ms: f.auto ? 1900 : 1500 }));
+        if (f.text && !f.auto) VS.assist.push({ pi: f.pi, uid: f.uid, cardId: f.cardId, name: f.name, text: f.text, kind: f.kind });
       } else if (f.type === 'win') {
         const who = f.winner === 0 ? 'あなた' : 'CPU';
         schedule(3600, () => showToast(`対戦終了！${who}の勝利！`, { variant: 'long', sub: f.reason, ms: 3600 }));

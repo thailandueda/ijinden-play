@@ -153,8 +153,22 @@
       if (inst && inst.silenced) { log(G, `　${card.name}は能力禁止中のため、能力は発動しません`); return; }
       const text = onlyText || SR.abilityText(card, kind);
       if (!text) return;
-      G.fx.push({ type: 'ability', pi, kind, cardId: card.id, name: card.name, text, uid: inst ? inst.uid : null });
-      log(G, `　${card.name}の能力：${text.replace(/\n/g, ' ')}（自動処理されません）`);
+      const auto = kind === 'mana' && !onlyText ? autoManaFromDeck(G, pi, card, text) : false;
+      G.fx.push({ type: 'ability', pi, kind, cardId: card.id, name: card.name, text, uid: inst ? inst.uid : null, auto });
+      if (!auto) log(G, `　${card.name}の能力：${text.replace(/\n/g, ' ')}（自動処理されません）`);
+    };
+    /* 自動処理：「魔力ゾーンに置かれたとき、自分の山札の上から1枚（カード2つ）を裏のまま魔力ゾーンに置く。」（〇〇の種・キャビネットなど）
+       任意（発動できる）や選択式（〜するか）の能力は対象外。山札が足りなければ置ける分だけ置く */
+    const KNUM = { '1': 1, '2': 2, '3': 3, '１': 1, '２': 2, '３': 3, '一': 1, '二': 2, '三': 3 };
+    function autoManaFromDeck(G, pi, card, text) {
+      const t = normTxt(text);
+      const m = t.match(/自分の山札の上から(?:カード)?([123１２３一二三])(?:枚|つ)を裏のまま魔力ゾーンに置く/);
+      if (!m || /発動できる|するか/.test(t)) return false;
+      const P = G.players[pi], n = KNUM[m[1]];
+      let k = 0;
+      for (; k < n && P.deck.length; k++) P.mana.push(mkInst(P.deck.pop(), { faceUp: false }));
+      log(G, `　${card.name}の能力（自動処理）：山札の上から${k}枚を裏のまま魔力ゾーンに置きました（山札残り${P.deck.length}枚）` + (k < n ? '　※山札が足りません' : ''));
+      return true;
     };
     /* 「破壊されない」：手動で付けたもの（このターン / 解除するまで）と、「「音楽」イジンが自分の戦場にいる間「破壊されない」を得る」型の常在能力 */
     function isIndestructible(G, inst) {
