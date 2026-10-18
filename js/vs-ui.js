@@ -413,6 +413,12 @@
       ENG.addLog(G, `遺業能力を実行：${nmx}（1ドロー）`);
       done();
     } });
+    // 冥府発動：このマホウの能力を（コストなしで）発動する。マホウの文から、手動で処理できるボタンを作る（あなたのカード）
+    const card = CARDS_BY_ID[f.cardId];
+    if (/冥府発動/.test(f.text) && f.pi === 0 && card && card.type === 'マホウ') {
+      const e = { pi: 0, uid: f.uid, cardId: f.cardId, name: `${f.name}（冥府発動）`, text: String(card.rule_text || ''), onDone: () => done() };
+      assistActions(e, () => {}).forEach(a => acts.push({ label: `冥府発動：${a.label}`, fn: anchor => a.fn(anchor) }));
+    }
     if (/反魂/.test(f.text)) {
       const guards = P.field.filter(x => !x.faceUp);
       if (guards.length) acts.push({ label: '反魂：ガーディアンを山札の下へ→戦場に戻す', fn: anchor => {
@@ -435,11 +441,13 @@
   const num = t => (t === undefined ? 1 : (NUM[t] || Number(t) || 1));
   function assistActions(e, done) {
     const G = VS.G, P = G.players[0], acts = [];
-    const text = e.text;
+    // 「戦場のイジン1体を指定して発動できる。そのイジンを手札に戻す」→「戦場のイジン1体を手札に戻す」と同じに読む（ストームなど）
+    const text = String(e.text || '').replace(/((?:相手の|自分の)?戦場の(?:イジン|ガーディアン))1体を指定して発動できる。その(?:イジン|ガーディアン)を/g, '$11体を');
     const ok = (r, msg) => {
       if (!r.ok) { flash(r.msg); return false; }
       ENG.addLog(G, `効果を手動で処理：${e.name}（${msg}）`);
       if (e.curAct) { (e.used = e.used || new Set()).add(e.curAct); doneToast(`${whose(e.pi)}${e.name}`, e.curAct); }
+      if (e.onDone) e.onDone();   // 遺業能力（冥府発動）から呼ばれたとき：遺業フェーズの行を処理済みにする
       return true;
     };
     const self = () => ['field', 'mana', 'grave'].map(z => ({ z, i: P[z].find(x => x.uid === e.uid) })).find(x => x.i);
