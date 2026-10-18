@@ -177,9 +177,11 @@
     function auraAttack(G, inst) {
       const o = ownerOf(G, inst); if (o < 0 || !inst.faceUp) return 0;
       return G.players[o].field.reduce((t, src) => {
-        if (src === inst || !src.faceUp || src.silenced) return t;
+        if (!src.faceUp || src.silenced) return t;
+        if (src === inst) { const ms = normTxt(cardOf(src).rule_text).match(/これが戦場にいる間、自分の戦場の「([^」]+)」イジンは「アタック\+(\d+)」を得る/); return t + (ms && hasTrait(cardOf(inst), ms[1]) ? Number(ms[2]) : 0); }
         const m = normTxt(cardOf(src).rule_text).match(/これが戦場にいる間、自分の戦場の他のイジンは「アタック\+(\d+)」を得る/);
-        return t + (m ? Number(m[1]) : 0);
+        const m2 = normTxt(cardOf(src).rule_text).match(/これが戦場にいる間、自分の戦場の「([^」]+)」イジンは「アタック\+(\d+)」を得る/);   // 直江兼続
+        return t + (m ? Number(m[1]) : 0) + (m2 && hasTrait(cardOf(inst), m2[1]) ? Number(m2[2]) : 0);
       }, 0);
     }
     const powerOf = (inst, G) => basePower(cardOf(inst)) + kwOf(inst).power + auraPower(G, inst) + grantsTo(G, inst).power + (inst.powerMod || 0);
@@ -194,6 +196,8 @@
         if (!src.faceUp || src.silenced) return;
         const m = normTxt(cardOf(src).rule_text).match(/これが戦場にいる間、自分の戦場の(他の)?イジンは「ブロック\+(\d+)」を得る/);
         if (m && !(m[1] && src === inst)) t += Number(m[2]);
+        const m2 = normTxt(cardOf(src).rule_text).match(/これが戦場にある間、自分の戦場のレベル(\d+)以下のイジンは「ブロック\+(\d+)」を得る/);
+        if (m2 && (cardOf(inst).level || 0) <= Number(m2[1])) t += Number(m2[2]);
       });
       return t;
     }
@@ -242,12 +246,19 @@
       const P = G.players[pi], n = KNUM[m[1]];
       let k = 0;
       for (; k < n && P.deck.length; k++) P.mana.push(mkInst(P.deck.pop(), { faceUp: false }));
+      if (k) onFaceDownMana(G, pi);   // エリザベス1世
       log(G, `　${card.name}の能力（自動処理）：山札の上から${k}枚を裏のまま魔力ゾーンに置きました（山札残り${P.deck.length}枚）` + (k < n ? '　※山札が足りません' : ''));
       return true;
     };
     /* 「破壊されない」：手動で付けたもの（このターン / 解除するまで）と、「「音楽」イジンが自分の戦場にいる間「破壊されない」を得る」型の常在能力 */
-    function isIndestructible(G, inst) {
+    function isIndestructible(G, inst, byAbility) {
       if (inst.indestructible) return true;
+      // 永遠の帝都「自分の戦場の『ブロック+』能力を持つイジンと、自分の戦場のガーディアンは「能力によって破壊されない」を得る」
+      if (byAbility && G) {
+        const o = G.players.findIndex(P => P.field.includes(inst));
+        if (o >= 0 && G.players[o].field.some(x => x.faceUp && !x.silenced && /自分の戦場の『ブロック\+』能力を持つイジンと、自分の戦場のガーディアンは「能力によって破壊されない」を得る/.test(normTxt(cardOf(x).rule_text))) &&
+          (!inst.faceUp || (cardOf(inst).type === 'イジン' && /ブロック\+\d/.test(normTxt(cardOf(inst).rule_text))))) return true;
+      }
       if (!inst.faceUp || inst.silenced || !G) return false;
       const pi = G.players.findIndex(P => P.field.includes(inst));
       if (pi < 0) return false;
@@ -423,10 +434,12 @@
     function canAct(G, pi) { return G.winner === null && G.current === pi && G.phase === 'main' && !G.battle; }
     const fail = msg => ({ ok: false, msg });
 
-    function endTurn(G, pi) {
+    /* skipEnd: 「残りのフェイズを行わずにターンを終了する」（勝海舟など）：エンドフェイズの能力は発動しない */
+    function endTurn(G, pi, skipEnd) {
       if (pi !== undefined && G.current !== pi) return fail('あなたのターンではありません');
       if (!canAct(G, G.current)) return fail('今はターンを終了できません');
       const P = G.players[G.current];
+      if (skipEnd) { log(G, `${nm(G, G.current)}：ターン終了（エンドフェイズは行いません）`); P.manaPlace = 0; P.summon = 0; G.phase = 'end'; G.current = 1 - G.current; G.turn += 1; beginTurn(G); return { ok: true }; }
       log(G, `${nm(G, G.current)}：エンドフェイズ（未使用の配置権・召喚権は消滅）`);
       cpuPhaseTriggers(G, G.current, 'endPhase');
       if (G.finalLose && G.finalLose.turn === G.turn && G.finalLose.pi === G.current) { win(G, 1 - G.current, 'ファイナルアタックの効果（エンドフェイズに敗北）'); return { ok: true }; }
@@ -546,7 +559,7 @@
       inst.faceUp = !!faceUp; inst.tapped = false;
       P.mana.push(inst);
       log(G, `${nm(G, pi)}：${cardLabel(G, pi, card, faceUp)}を${faceUp ? '表' : '裏'}向きでマリョク配置`);
-      if (faceUp) abilityFx(G, pi, card, 'mana', inst);
+      if (faceUp) abilityFx(G, pi, card, 'mana', inst); else onFaceDownMana(G, pi);
       onManaPlaced(G, pi);
       return { ok: true };
     }
@@ -710,6 +723,12 @@
         insts[0].pressureTurn = G.turn; log(G, '　栄西の効果：アタッカーはこのターン「ダブルプレッシャー」を得ます');
       }
       cpuOnAttack(G, pi, insts);
+      if (G.fogTurn === G.turn && G.battle) {   // 勝海舟：バトルを中断して、相手（ターンプレイヤー）は残りのフェイズを行わずにターン終了
+        G.battle = null; G.phase = 'main';
+        log(G, `　バトルを中断。${nm(G, pi)}は残りのフェイズを行わずにターンを終了します`);
+        endTurn(G, pi, true);
+        return { ok: true, turnEnded: true };
+      }
       return { ok: true };
     }
 
@@ -892,7 +911,7 @@
       const P = G.players[pi];
       const i = P.field.findIndex(x => x.uid === uid);
       if (i < 0) return fail('カードが見つかりません');
-      if (isIndestructible(G, P.field[i])) return fail(`${cardOf(P.field[i]).name}は「破壊されない」状態です（解除してから破壊してください）`);
+      if (isIndestructible(G, P.field[i], true)) return fail(`${cardOf(P.field[i]).name}は「破壊されない」状態です（解除してから破壊してください）`);
       const inst = P.field.splice(i, 1)[0], c = cardOf(inst), wasUp = inst.faceUp;
       releaseEquips(G, pi, inst);
       inst.faceUp = true; inst.tapped = false; inst.isGuardian = false; inst.silenced = false; inst.indestructible = false;
@@ -1120,9 +1139,55 @@
       return assign;
     }
     function cpuAutoBlock(G) {
+      if (!G.battle) return { ok: true };   // バトルが中断された（勝海舟など）
       const defIdx = 1 - G.current;
       return declareBlocks(G, defIdx, cpuChooseBlocks(G, defIdx));
     }
+
+    /* ---------- 第3弾：手札を墓地へ・相手にドローさせる・魔力ゾーンの出入り ---------- */
+    // 能力で手札から墓地へ（緒方洪庵「能力によって手札から墓地にイジンが置かれるたび、そのカードのプレイヤーは1ドローする」）
+    function handToGrave(G, q, inst) {
+      const P = G.players[q]; const i = P.hand.indexOf(inst); if (i < 0) return;
+      P.hand.splice(i, 1); inst.faceUp = true; P.grave.push(inst);
+      if (cardOf(inst).type === 'イジン') G.players.forEach((Q, o) => Q.field.forEach(x => {
+        if (x.faceUp && !x.silenced && /能力によって手札から墓地にイジンが置かれるたび、そのカードのプレイヤーは1ドローする/.test(cardOf(x).rule_text || '')) manualDraw(G, q, 1, cardOf(x).name);
+      }));
+    }
+    // 相手に手札を捨てさせる（選ぶのは相手：一番使い道の薄いカードを選んだことにする）
+    function forceDiscard(G, q, n, by) {
+      const P = G.players[q], names = [];
+      for (let k = 0; k < n && P.hand.length; k++) {
+        const x = P.hand.slice().sort((a, b) => cardUsefulness(G, q, a) - cardUsefulness(G, q, b))[0];
+        names.push(cardOf(x).name); handToGrave(G, q, x);
+      }
+      if (names.length) log(G, `　${by}：${nm(G, q)}は手札の${names.join('、')}を墓地に置きました`);
+    }
+    // 能力で相手にドローさせる（徳川慶喜「戦場の能力によって相手がドローしたとき、相手の手札のカード1つを墓地に置く」）
+    function oppDraw(G, pi, n, by) {
+      manualDraw(G, 1 - pi, n, by);
+      G.players[pi].field.filter(x => x.faceUp && !x.silenced && /戦場の能力によって相手がドローしたとき、相手の手札のカード1つを墓地に置く/.test(cardOf(x).rule_text || '')).forEach(x => forceDiscard(G, 1 - pi, 1, cardOf(x).name));
+    }
+    // エリザベス1世「カードが裏向きで自分の魔力ゾーンに置かれたとき、1ドローする」「能力によってカードが自分の魔力ゾーンを離れるたび、相手のパワー3000以下のイジン1体を破壊（ターンに1回）」
+    function onFaceDownMana(G, pi) {
+      if (!G.aiPlayers.has(pi)) return;
+      G.players[pi].field.filter(x => x.faceUp && !x.silenced && /カードが裏向きで自分の魔力ゾーンに置かれたとき、1ドローする/.test(cardOf(x).rule_text || '')).forEach(x => manualDraw(G, pi, 1, cardOf(x).name));
+    }
+    function onManaLeft(G, pi) {
+      if (!G.aiPlayers.has(pi)) return;
+      G.players[pi].field.filter(x => x.faceUp && !x.silenced && /能力によってカードが自分の魔力ゾーンを離れるたび、相手の戦場のパワー(\d+)以下のイジン1体を破壊する/.test(normTxt(cardOf(x).rule_text))).forEach(x => {
+        if (x.eliTurn === G.turn) return; x.eliTurn = G.turn;
+        const lim = Number(normTxt(cardOf(x).rule_text).match(/離れるたび、相手の戦場のパワー(\d+)以下/)[1]);
+        destroyBest(G, pi, G.players[1 - pi].field.filter(y => isIjinUp(y) && powerOf(y, G) <= lim));
+      });
+    }
+    // 自分の魔力ゾーンの裏のカード1つを手札に戻す（スチーブンソン・ホイットニー）
+    function takeFaceDownMana(G, pi) {
+      const P = G.players[pi], m = P.mana.find(x => !x.faceUp); if (!m) return false;
+      P.mana.splice(P.mana.indexOf(m), 1); m.faceUp = true; P.hand.push(m); onManaLeft(G, pi); return true;
+    }
+    // LO（山札切れ）を狙うデッキか：相手の山札を削るカードが多い
+    const loPlan = (G, pi) => { const P = G.players[pi]; const all = P.deck.map(id => cardsById[id]).concat(P.hand.map(cardOf));
+      return all.filter(c => /相手の山札の上から\d枚を墓地に置/.test(normTxt(c.rule_text))).length >= 4; };
 
     /* ---------- CPUの効果で使う小さな処理 ---------- */
     function bounce(G, q, inst, by) {   // 戦場のイジンを持ち主の手札に戻す
@@ -1154,6 +1219,8 @@
         if (!G.aiPlayers.has(pi) || !x.faceUp || x.silenced) return;
         const m = normTxt(cardOf(x).rule_text).match(/(赤|青|緑|黄|紫)のイジンが自分の戦場に置かれたときに発動できる/);
         if (m && ijinHasColor(G, inst, m[1])) cpuTrigger(G, pi, x, /のイジンが自分の戦場に置かれたときに発動できる/, 'ownIjin');
+        const t = normTxt(cardOf(x).rule_text).match(/「([^」]+)」イジンが自分の戦場に置かれたときに発動できる/);   // 本居宣長
+        if (t && hasTrait(cardOf(inst), t[1])) cpuTrigger(G, pi, x, /イジンが自分の戦場に置かれたときに発動できる/, 'ownIjin');
       });
       G.players[1 - pi].field.forEach(x => {
         if (!G.aiPlayers.has(1 - pi) || !x.faceUp || x.silenced) return;
@@ -1175,6 +1242,17 @@
           log(G, `　${cardOf(t).name}の効果：${a.faceUp ? cardOf(a).name : 'ガーディアン'}はアタッカーでなくなりました`);
           manualDestroy(G, 1 - pi, t.uid, cardOf(t).name);
           G.fx.push({ type: 'ability', pi: 1 - pi, kind: 'attackDecl', cardId: t.cardId, name: cardOf(t).name, text: 'アタッカー1体をアタッカーでない状態に', uid: t.uid, auto: true });
+        }
+      }
+      if (G.aiPlayers.has(1 - pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(1 - pi)) && G.battle) {
+        const kai = D.field.find(x => x.faceUp && !x.silenced && /相手のターンのブロックステップが開始したとき、自分の戦場の「志願」イジンかガーディアン1体を指定して発動できる。そのイジンかガーディアンと、これを破壊する/.test(normTxt(cardOf(x).rule_text)));
+        const atks = G.battle.attackers.map(u => P.field.find(x => x.uid === u)).filter(Boolean);
+        const g = kai && D.field.find(x => isGuardianInst(x) && x !== kai);
+        if (kai && g && !coverable(G, asAtk(G, atks), eligibleBlockers(G, 1 - pi))) {
+          log(G, `　${cardOf(kai).name}：このままでは防げないので、ガーディアン1体とこれを破壊してバトルを中断します`);
+          manualDestroy(G, 1 - pi, g.uid, cardOf(kai).name); manualDestroy(G, 1 - pi, kai.uid, cardOf(kai).name);
+          G.fogTurn = G.turn;
+          G.fx.push({ type: 'ability', pi: 1 - pi, kind: 'block', cardId: kai.cardId, name: cardOf(kai).name, text: 'バトルを中断して相手のターンを終了', uid: kai.uid, auto: true });
         }
       }
       if (G.aiPlayers.has(pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) {
@@ -1270,7 +1348,7 @@
     /* ---------- カードごとの処理（書式だけでは決められない「どれを選ぶか」「いつ使うか」があるもの） ----------
        want(G, pi): 使う価値があれば対象（ctx.target）を返す。timing: 'main'（メイン）| 'preAttack'（アタック宣言の直前）
        resolve(G, pi, ctx): 効果を処理する（ctx.target は want が返したもの） */
-    const notIndestructible = G => x => !isIndestructible(G, x);
+    const notIndestructible = G => x => !isIndestructible(G, x, true);
     const CARD_AI = {
       // 自分のイジン1体と相手のイジン1体を破壊：価値の低い自分のイジンで、価値の高い相手のイジンを取る
       'バレット': {
@@ -1451,7 +1529,8 @@
         resolve(G, pi, ctx) {
           if (ctx.kind !== 'field') return false;
           const P = G.players[pi], n = manaInfo(P).colors.size;
-          const ms = P.grave.filter(x => cardOf(x).type === 'マホウ').sort((a, b) => (CARD_AI[cardOf(b).name] ? 1 : 0) - (CARD_AI[cardOf(a).name] ? 1 : 0)).slice(0, n);
+          const mill = c => /相手の山札の上から\d枚を墓地に置/.test(normTxt(cardOf(c).rule_text)) ? 2 : 0;
+          const ms = P.grave.filter(x => cardOf(x).type === 'マホウ').sort((a, b) => (mill(b) + (CARD_AI[cardOf(b).name] ? 1 : 0)) - (mill(a) + (CARD_AI[cardOf(a).name] ? 1 : 0))).slice(0, n);
           ms.forEach(x => { P.grave.splice(P.grave.indexOf(x), 1); x.faceUp = true; P.hand.push(x); });
           log(G, `　藤原道長：墓地のマホウ${ms.length}枚（${ms.map(x => cardOf(x).name).join('、') || 'なし'}）を手札に戻しました`);
         }
@@ -1740,7 +1819,7 @@
       },
       'コーザリティ': {   // 相手の山札の上から2枚を墓地に置いて、自分の墓地のイジン1体を手札に
         timing: 'main',
-        want(G, pi) { return G.players[pi].grave.some(x => cardOf(x).type === 'イジン' && cardValue(cardOf(x)) >= 5000) ? {} : null; },
+        want(G, pi) { return loPlan(G, pi) || G.players[pi].grave.some(x => cardOf(x).type === 'イジン' && cardValue(cardOf(x)) >= 5000) ? {} : null; },
         resolve(G, pi) {
           millN(G, 1 - pi, 2, 'コーザリティ');
           const P = G.players[pi], c = P.grave.filter(x => cardOf(x).type === 'イジン').sort((a, b) => ijinScore(G, pi, cardOf(b)) - ijinScore(G, pi, cardOf(a)))[0];
@@ -1798,7 +1877,7 @@
       'ファイナルアタック': {   // 次のエンドフェイズに敗北。イジンすべてを起こして追加でバトル：それで勝てるときだけ
         timing: 'post',
         want(G, pi) {
-          if (G.finalLose) return null;
+          if (G.finalLose || !G.battleUsed) return null;
           const P = G.players[pi], was = P.field.map(x => x.tapped);
           P.field.forEach(x => { if (isIjinUp(x)) x.tapped = false; });
           G.battleUsed = false;
@@ -1812,6 +1891,151 @@
           log(G, '　ファイナルアタック：イジンすべてを起こして、追加でバトルします（このターンのエンドフェイズに敗北）');
         }
       },
+      // ===== 第3弾プリセットのカード =====
+      '浪士集う長屋': {   // メインフェイズ開始時：山札の上から3枚まで墓地へ → 1枚以上:配置権+1、2枚以上:召喚権+1、3枚:1ドロー
+        resolve(G, pi, ctx) {
+          if (ctx.kind === 'field') return;
+          if (ctx.kind !== 'mainStart') return false;
+          const d = G.players[pi].deck.length, n = d >= 15 ? 3 : d >= 10 ? 2 : d >= 7 ? 1 : 0;
+          if (!n) return 'declined';
+          millN(G, pi, n, '浪士集う長屋');
+          const P = G.players[pi];
+          P.manaPlace += 1; if (n >= 2) P.summon += 1; if (n >= 3) manualDraw(G, pi, 1, '浪士集う長屋');
+          log(G, `　浪士集う長屋：配置権+1${n >= 2 ? '・召喚権+1' : ''}${n >= 3 ? '・1ドロー' : ''}`);
+        }
+      },
+      '土方歳三': {   // 「志願」イジンとガーディアンの数だけ、自分か相手がドロー（LOデッキなら相手）／ガーディアンがいなければ召喚権+2
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'field') return false;
+          const P = G.players[pi];
+          const n = P.field.filter(x => (isIjinUp(x) && hasTrait(cardOf(x), '志願')) || isGuardianInst(x)).length;
+          if (n) {
+            if (loPlan(G, pi) || P.deck.length < n + 8) oppDraw(G, pi, n, '土方歳三');
+            else manualDraw(G, pi, Math.min(n, 3), '土方歳三');
+          }
+          if (!P.field.some(isGuardianInst)) { P.summon += 2; log(G, '　土方歳三：ガーディアンがいないのでイジン召喚権+2'); }
+        }
+      },
+      '李成桂': {   // 自分の墓地の一番価値の高いイジンを山札の上へ（次に引く）
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'field') return false;
+          const P = G.players[pi], c = P.grave.filter(x => cardOf(x).type === 'イジン').sort((a, b) => ijinScore(G, pi, cardOf(b)) - ijinScore(G, pi, cardOf(a)))[0];
+          if (!c || cardValue(cardOf(c)) < 5000) return 'declined';
+          P.grave.splice(P.grave.indexOf(c), 1); P.deck.push(c.cardId); log(G, `　李成桂：墓地の${cardOf(c).name}を山札の上に戻しました`); graveLeft(G, pi);
+        }
+      },
+      '本居宣長': {   // 「医術」イジンが置かれたとき：1ドロー、相手も1ドロー（手札が少ないときだけ）
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'ownIjin') return false;
+          if (G.players[pi].hand.length > 4 && !loPlan(G, pi)) return 'declined';
+          manualDraw(G, pi, 1, '本居宣長'); oppDraw(G, pi, 1, '本居宣長');
+        }
+      },
+      'ジョージ・スチーブンソン': {   // 魔力ゾーンの裏のカードを手札に戻して配置権+1：手札にマリョクがあるとき（裏を表のマリョクに入れ替える）
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'field') return false;
+          const P = G.players[pi];
+          if (!P.mana.some(x => !x.faceUp) || !P.hand.some(x => cardOf(x).type === 'マリョク')) return 'declined';
+          takeFaceDownMana(G, pi); P.manaPlace += 1; log(G, '　ジョージ・スチーブンソン：裏のカードを手札に戻して、マリョク配置権+1');
+        }
+      },
+      'イーライ・ホイットニー': {   // 魔力ゾーンの裏のカードを手札に戻して、相手のパワー3000以下のイジン1体を破壊
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'field') return false;
+          const t = G.players[1 - pi].field.filter(x => isIjinUp(x) && powerOf(x, G) <= 3000).filter(notIndestructible(G)).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
+          if (!t || instValue(G, t) < 2500 || !G.players[pi].mana.some(x => !x.faceUp)) return 'declined';
+          takeFaceDownMana(G, pi); manualDestroy(G, 1 - pi, t.uid, 'イーライ・ホイットニー');
+        }
+      },
+      'マリ・キュリー': {   // 相手の手札が自分より多いなら、同じ枚数になるまで相手が墓地に置く
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'field') return false;
+          const n = G.players[1 - pi].hand.length - G.players[pi].hand.length;
+          if (n > 0) forceDiscard(G, 1 - pi, n, 'マリ・キュリー'); else log(G, '　マリ・キュリー：相手の手札は自分より多くありません');
+        }
+      },
+      '芹沢鴨': {   // 相手の手札1枚（相手が選ぶ）と自分の手札1枚を墓地へ
+        resolve(G, pi, ctx) { if (ctx.kind !== 'field') return false; forceDiscard(G, 1 - pi, 1, '芹沢鴨'); discardLowest(G, pi, 1, '芹沢鴨'); }
+      },
+      '渡辺崋山': {
+        resolve(G, pi, ctx) {
+          const P = G.players[pi];
+          if (ctx.kind === 'field') { const n = P.field.filter(x => isIjinUp(x) && hasTrait(cardOf(x), '美術')).length; if (n) manualDraw(G, pi, Math.min(n, Math.max(0, P.deck.length - 6)), '渡辺崋山'); return; }
+          if (ctx.kind === 'destroyed') { const n = P.field.filter(x => isIjinUp(x) && hasTrait(cardOf(x), '医術')).length; if (n) forceDiscard(G, G.current, n, '渡辺崋山'); return; }
+          return false;
+        }
+      },
+      'サンダーボルト': {   // 相手のパワー4000以下のイジンすべてと、相手のハイケイすべてを破壊
+        timing: 'main',
+        want(G, pi) {
+          const O = G.players[1 - pi];
+          const v = O.field.filter(x => (isIjinUp(x) && powerOf(x, G) <= 4000) || (x.faceUp && cardOf(x).type === 'ハイケイ')).filter(notIndestructible(G)).reduce((t, x) => t + (cardOf(x).type === 'ハイケイ' ? 3000 : instValue(G, x)), 0);
+          return v >= 7000 ? {} : null;
+        },
+        resolve(G, pi) {
+          const O = G.players[1 - pi];
+          O.field.filter(x => (isIjinUp(x) && powerOf(x, G) <= 4000) || (x.faceUp && cardOf(x).type === 'ハイケイ')).slice().forEach(x => { if (!isIndestructible(G, x, true)) manualDestroy(G, 1 - pi, x.uid, 'サンダーボルト'); });
+        }
+      },
+      'スピリットアウェイ': {   // 自分のガーディアン1体を手札に戻し、相手の山札の上から2枚を墓地へ、配置権+1：LOデッキ、またはガーディアンに余裕があり置くマリョクがあるとき
+        timing: 'main',
+        want(G, pi) {
+          const P = G.players[pi], gs = myGuards(G, pi).length;
+          if (loPlan(G, pi)) return gs >= 1 ? {} : null;   // LOデッキ：相手の山札を削るのが勝ち筋
+          if (gs < 2) return null;
+          return gs >= 4 && P.manaPlace < 1 && P.hand.some(x => cardOf(x).type === 'マリョク') ? {} : null;
+        },
+        resolve(G, pi) {
+          const P = G.players[pi], g = takeGuardian(G, pi);
+          if (g) { P.field.splice(P.field.indexOf(g), 1); g.faceUp = true; g.isGuardian = false; g.tapped = false; P.hand.push(g); log(G, '　スピリットアウェイ：ガーディアン1体を手札に戻しました'); }
+          millN(G, 1 - pi, 2, 'スピリットアウェイ'); P.manaPlace += 1;
+        }
+      },
+      'エアロオーラ': { timing: 'main', want(G, pi) { return G.players[pi].hand.length <= 4 && G.players[pi].deck.length > 8 ? {} : null; }, resolve(G, pi) { manualDraw(G, pi, 1, 'エアロオーラ'); } },
+      '永遠の帝都': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },   // エンジンが処理
+      '暴風岬': {   // エンドフェイズ：置かれたときの能力を持つ自分のイジン1体を手札に戻して1ドロー（次のターンにまた使う）
+        resolve(G, pi, ctx) {
+          if (ctx.kind === 'field') return;
+          if (ctx.kind !== 'endPhase') return false;
+          const P = G.players[pi];
+          const t = P.field.filter(x => isIjinUp(x) && SR.abilityText(cardOf(x), 'field') && cardOf(x).level <= manaInfo(P).cap).sort((a, b) => instValue(G, a) - instValue(G, b))[0];
+          if (!t || P.deck.length <= 6) return 'declined';
+          bounce(G, pi, t, '暴風岬'); manualDraw(G, pi, 1, '暴風岬');
+        }
+      },
+      'タイムディレイション': {   // これを裏にして魔力ゾーンに置き、ターンを終える：バトルの後に使えば、魔力ゾーンが1枚増えるだけ
+        timing: 'post',
+        want() { return {}; },
+        resolve(G, pi) {
+          const P = G.players[pi], me = P.grave.slice().reverse().find(x => cardOf(x).name === 'タイムディレイション');
+          if (me) { P.grave.splice(P.grave.indexOf(me), 1); me.faceUp = false; P.mana.push(me); log(G, '　タイムディレイション：これを裏にして魔力ゾーンに置きました'); onFaceDownMana(G, pi); }
+          if (G.current === pi) G.cpuStage = 'after';
+        }
+      },
+      '商館並ぶ人工島': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : ctx.kind === 'mainStart' ? 'declined' : false; } },
+      '松平定信': {   // 相手の寝ているイジンすべてを山札の下へ → 自分の山札の下から1枚を手札に（ターンに1回）
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'field') return false;
+          const O = G.players[1 - pi], ts = O.field.filter(x => isIjinUp(x) && x.tapped);
+          ts.forEach(x => { O.field.splice(O.field.indexOf(x), 1); releaseEquips(G, 1 - pi, x); O.deck.unshift(x.cardId); });
+          log(G, `　松平定信：${nm(G, 1 - pi)}の寝ているイジン${ts.length}体を山札の下に戻しました`);
+          const P = G.players[pi];
+          if (ts.length && P.deck.length) { P.hand.push(mkInst(P.deck.shift())); log(G, '　松平定信：自分の山札の下から1枚を手札に加えました'); }
+        }
+      },
+      '井伊直弼': {   // メインフェイズ開始時：山札の下から2枚を見て、レベル7以下のイジンを戦場に、残りを手札に
+        resolve(G, pi, ctx) {
+          if (ctx.kind !== 'mainStart') return false;
+          const P = G.players[pi], got = [];
+          for (let k = 0; k < 2 && P.deck.length; k++) got.push(mkInst(P.deck.shift()));
+          got.forEach(x => { if (cardOf(x).type === 'イジン' && (cardOf(x).level || 0) <= 7) placeToField(G, pi, x, '井伊直弼'); else P.hand.push(x); });
+          log(G, `　井伊直弼：山札の下から${got.length}枚を見ました`);
+        }
+      },
+      'ダンダラ羽織': { resolve(G, pi, ctx) { return ctx.kind === 'mana' ? 'declined' : false; } },   // 装備は使わない
+      '虎狼痢': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },        // 手札を見せ合う効果は省略
+      'ルイス・キャロル': { resolve(G, pi, ctx) { return ctx.kind === 'shippitsu' ? undefined : false; } },   // 執筆は効果を持たない
+      '勝海舟': {},   // 防御側の処理は cpuOnAttack
     };
 
     /* CPUの遺業能力（戦場から墓地に置かれたとき）。読めるものだけ処理して true を返す */
@@ -1873,7 +2097,7 @@
       const P = G.players[pi], names = [];
       for (let k = 0; k < n && P.hand.length; k++) {
         const x = P.hand.slice().sort((a, b) => cardUsefulness(G, pi, a) - cardUsefulness(G, pi, b))[0];
-        P.hand.splice(P.hand.indexOf(x), 1); x.faceUp = true; P.grave.push(x); names.push(cardOf(x).name);
+        names.push(cardOf(x).name); handToGrave(G, pi, x);
       }
       if (names.length) log(G, `　${by || '効果'}：${nm(G, pi)}は手札の${G.aiPlayers.has(pi) ? names.join('、') : names.length + '枚'}を墓地に置きました`);
     }
@@ -1911,7 +2135,7 @@
         const n = G.players[pi].field.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').length; if (n) manualDraw(G, pi, n, '効果'); } },
       // 山札・墓地・手札
       { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を、?裏のまま魔力ゾーンに置く$/, run: (G, pi, m) => {
-        const P = G.players[pi]; for (let k = 0; k < KNUM[m[1]] && P.deck.length; k++) P.mana.push(mkInst(P.deck.pop(), { faceUp: false }));
+        const P = G.players[pi]; for (let k = 0; k < KNUM[m[1]] && P.deck.length; k++) P.mana.push(mkInst(P.deck.pop(), { faceUp: false })); onFaceDownMana(G, pi);
         log(G, `　効果：${nm(G, pi)}の山札の上から${KNUM[m[1]]}枚を裏のまま魔力ゾーンに置きました`); } },
       { re: /^自分の山札の上から([1-9])枚を墓地に置く$/, run: (G, pi, m) => { millN(G, pi, Number(m[1])); } },
       { re: /^自分の手札([1-3])枚を墓地に置く$/, run: (G, pi, m) => { discardLowest(G, pi, Number(m[1])); } },
@@ -2083,6 +2307,14 @@
     // CPUのイジンが寝たとき（曹丕「戦場の黄のイジンは「寝たとき、パワー4000以下のイジン1体を破壊する」を得る」）
     function cpuOnTapped(G, owner, insts) {
       if (!G.aiPlayers.has(owner) || (G.cpuNoEffects && G.cpuNoEffects.has(owner))) return;
+      // 岡田以蔵「これのパワーが6000以上なら、これが寝たときに発動する。自分か相手の戦場のイジンかガーディアン1体を破壊する」
+      insts.filter(x => x.faceUp && !x.silenced && /これのパワーが(\d+)以上なら、これが寝たときに発動する。自分か相手の戦場のイジンかガーディアン1体を破壊する/.test(normTxt(cardOf(x).rule_text))).forEach(x => {
+        const lim = Number(normTxt(cardOf(x).rule_text).match(/これのパワーが(\d+)以上/)[1]);
+        if (powerOf(x, G) < lim) return;
+        const O = G.players[1 - owner];
+        const t = O.field.filter(isIjinUp).filter(notIndestructible(G)).sort((a, b) => instValue(G, b) - instValue(G, a))[0] || O.field.filter(isGuardianInst).filter(notIndestructible(G))[0];
+        if (t) manualDestroy(G, 1 - owner, t.uid, cardOf(x).name);
+      });
       const src = G.players.map(P => P.field.find(x => x.faceUp && !x.silenced && /戦場の黄のイジンは「寝たとき、パワー(\d+)以下のイジン1体を破壊する」を得る/.test(normTxt(cardOf(x).rule_text)))).find(Boolean);
       if (!src) return;
       const lim = Number(normTxt(cardOf(src).rule_text).match(/寝たとき、パワー(\d+)以下のイジン1体を破壊する/)[1]);
@@ -2157,6 +2389,12 @@
     }
     function cpuSummon(G, pi) {
       const P = G.players[pi];
+      // ルイス・キャロル「自分がイジン召喚をする際、イジン召喚権でなくマリョク配置権を使ってもよい」：配置権が残っていて、手札にマリョクがないとき
+      if (P.summon < 1 && P.manaPlace > 0 && !P.hand.some(x => cardOf(x).type === 'マリョク') &&
+        P.field.some(x => x.faceUp && !x.silenced && /自分がイジン召喚をする際、イジン召喚権でなくマリョク配置権を使ってもよい/.test(cardOf(x).rule_text || '')) &&
+        P.hand.some(x => cardOf(x).type === 'イジン' && conditionProblems(P, cardOf(x), summonInfo(G, pi, cardOf(x)).auto, G).length === 0)) {
+        P.manaPlace -= 1; P.summon += 1; log(G, '　ルイス・キャロル：マリョク配置権をイジン召喚に使います');
+      }
       if (P.summon < 1) return false;
       const cands = P.hand.filter(i => cardOf(i).type === 'イジン' && playProblems(G, pi, cardOf(i)).length === 0);
       // 劉備「自分のイジン召喚に際し、自分の戦場のイジンを3体まで寝かせてもよい。寝かせた1体につき、手札のイジンは「レベル-1」される」
@@ -2231,6 +2469,8 @@
     }
 
     /* 1手ずつ進める。戻り値: 'continue' | 'await_block' | 'turnEnded' | 'over' | 'idle' */
+    // アイザック・ニュートンが自分の戦場にいる：手札を10枚以上ためて勝つ（召喚権は残してエンドフェイズのドローに回す）
+    const newtonMode = (G, pi) => G.players[pi].field.some(x => x.faceUp && !x.silenced && /自分のドローフェイズが開始したとき、自分の手札が10枚以上なら発動する。ゲームに勝利する/.test(normTxt(cardOf(x).rule_text)));
     function cpuStep(G) {
       if (G.winner !== null) return 'over';
       const pi = G.current;
@@ -2245,13 +2485,17 @@
             break;
           case 'mana':
             G.cpuStage = 'haikei';
+            if (newtonMode(G, pi) && G.players[pi].hand.length <= 10) break;   // ニュートン：手札をためる
             if (cpuPlaceMana(G, pi)) return 'continue';
             break;
           case 'haikei':
+            // ニュートン：ハイケイを置いても手札が減らない（ハリエットのドローがある）ときだけ置く
+            if (newtonMode(G, pi) && G.players[pi].hand.length <= 10 && !G.players[pi].field.some(x => x.faceUp && cardOf(x).name === 'ハリエット・ビーチャー・ストウ')) { G.cpuStage = 'summon'; break; }
             if (cpuHaikei(G, pi)) return 'continue';
             G.cpuStage = 'summon';
             break;
           case 'summon':
+            if (newtonMode(G, pi)) { G.cpuStage = 'mahou'; break; }   // ニュートン：召喚権を残してエンドフェイズにドロー
             if (cpuSummon(G, pi)) return 'continue';
             G.cpuStage = 'mahou';
             break;
@@ -2260,7 +2504,7 @@
             G.cpuStage = 'summon2';
             break;
           case 'summon2':   // マホウで召喚権が増えた・ドローした場合にもう一度
-            if (cpuSummon(G, pi)) return 'continue';
+            if (!newtonMode(G, pi) && cpuSummon(G, pi)) return 'continue';
             G.cpuStage = 'attack';
             break;
           case 'attack': {
@@ -2276,7 +2520,7 @@
           }
           case 'post':   // バトル後：召喚権が増えていれば（コロンブスの航海など）もう一度召喚
             if (cpuSummon(G, pi)) return 'continue';
-            if (G.battleUsed && cpuMahou(G, pi, 'post')) { if (!G.battleUsed) G.cpuStage = 'attack'; return 'continue'; }   // ファイナルアタックで追加のバトル
+            if (cpuMahou(G, pi, 'post')) { if (G.cpuStage === 'post' && !G.battleUsed) G.cpuStage = 'attack'; return 'continue'; }   // ファイナルアタックで追加のバトル／タイムディレイション
             G.cpuStage = 'after';
             break;
           default:

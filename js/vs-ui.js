@@ -997,7 +997,8 @@
       setTimeout(() => {
         ENG.cpuAutoBlock(G);   // CPUがブロックを選んでバトル解決（ガーディアンが寝る誘発があれば先に処理）
         render();
-        const fin = () => setTimeout(() => { VS.busy = false; render(); }, fxWait() + 80);   // 演出が終わるまで操作を止める
+        // 演出が終わるまで操作を止める。勝海舟などで自分のターンが終わっていたら、CPUのターンを始める
+        const fin = () => setTimeout(() => { VS.busy = false; render(); if (G.winner === null && G.current === 1) runCpu(); }, fxWait() + 80);
         if (G.battle && G.battle.pending) pumpTriggers(() => { ENG.resolvePending(G); render(); fin(); });
         else fin();
       }, Math.max(900, fxWait() + 200));
