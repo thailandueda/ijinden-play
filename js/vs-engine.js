@@ -1432,6 +1432,12 @@
           if (gs.length) log(G, `　効果：${nm(G, q)}のガーディアン${gs.length}体を手札に戻しました`); }); } },
       { re: /^戦場のガーディアンすべてを寝かせる$/, run: (G) => {
         G.players.forEach(P => P.field.filter(isGuardianInst).forEach(g => { g.tapped = true; })); log(G, '　効果：戦場のガーディアンすべてを寝かせました'); guardianTapped(G); } },
+      // 相手のイジンを裏にして（持ち主の）魔力ゾーンへ（紫式部の執筆）：一番価値の高いもの
+      { re: /^相手の戦場のイジン1体を裏にして魔力ゾーンに置く$/, run: (G, pi) => {
+        const O = G.players[1 - pi], t = O.field.filter(isIjinUp).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
+        if (!t) { log(G, '　対象になる相手のイジンがいません'); return; }
+        O.field.splice(O.field.indexOf(t), 1); releaseEquips(G, 1 - pi, t); t.faceUp = false; t.tapped = false; t.isGuardian = false; O.mana.push(t);
+        log(G, `　効果：${nm(G, 1 - pi)}の${cardOf(t).name}を裏にして魔力ゾーンに置きました`); } },
       // 破壊
       { re: /^これのパワー以下のパワーを持つ相手の戦場のイジン1体を破壊する$/, run: (G, pi, m, ctx) => {
         const lim = ctx.inst ? powerOf(ctx.inst, G) : 0;
