@@ -153,7 +153,10 @@
       if (inst && inst.silenced) { log(G, `　${card.name}は能力禁止中のため、能力は発動しません`); return; }
       const text = onlyText || SR.abilityText(card, kind);
       if (!text) return;
-      const auto = kind === 'mana' && !onlyText ? autoManaFromDeck(G, pi, card, text) : false;
+      const auto = onlyText ? false
+        : kind === 'mana' ? autoManaFromDeck(G, pi, card, text)
+        : (kind === 'mahou' && G.aiPlayers.has(pi)) ? cpuResolve(G, pi, card, text)   // CPUのマホウは、書式の決まった効果なら自動処理
+        : false;
       G.fx.push({ type: 'ability', pi, kind, cardId: card.id, name: card.name, text, uid: inst ? inst.uid : null, auto });
       if (!auto) log(G, `　${card.name}の能力：${text.replace(/\n/g, ' ')}（自動処理されません）`);
     };
@@ -828,34 +831,111 @@
       return { ok: true };
     }
 
-    /* ---------- CPU（ランダムに合法手を選ぶ） ---------- */
-    function cpuChooseBlocks(G, defIdx) {
-      const atks = G.battle.attackers.map(u => G.players[G.current].field.find(x => x.uid === u)).filter(Boolean);
-      let pool = shuffle(eligibleBlockers(G, defIdx));
-      // アンナ・パブロワが戦場にいるときは、ブロッカーのイジンを手札に戻されてしまうので、ガーディアン（裏向き）だけでブロックする。
-      // （ガーディアンはイジンではないので戻されない。必要数に足りないときだけ、不足分をイジンで補う）
-      const annaThreat = annaOnField(G) > 0;
-      if (annaThreat) pool = pool.filter(b => !b.faceUp).concat(pool.filter(b => b.faceUp));
-      const assign = {};
-      // 必要ブロッカー数の多いアタッカーから先に埋める（防げないと負けるため）
-      const order = atks.slice().sort((a, b) => requiredBlockers(b, G) - requiredBlockers(a, G));
-      for (const a of order) {
-        const need = requiredBlockers(a, G);
-        for (let k = 0; k < need; k++) {
-          const i = pool.findIndex(b => canBlockAttacker(G, b, a));
-          if (i < 0) break;
-          assign[pool.splice(i, 1)[0].uid] = a.uid;
+    /* =====================================================================
+       CPUの思考（ルールベース）
+       - 勝ち筋：相手がアタッカー全員を必要数ブロックできなければ勝ち → 詰みがあれば全員でアタック
+       - 安全なアタック：相手のイジンのブロックで倒されないアタッカーだけで殴る（ガーディアンを削る）
+       - 守り：アタック後、次の相手ターンに相手の全イジンを防ぎきれる数のブロッカーを残す
+       - 召喚・マリョク配置・ハイケイ・マホウは「点数」で選ぶ
+       - カード効果は cpuResolve（決まった書式の文だけ自動処理）で処理できるものだけを当てにする
+       ===================================================================== */
+    const isIjinUp = x => x.faceUp && cardOf(x).type === 'イジン';
+    const cardValue = c => (c.power || 0) + (c.level || 0) * 1000;
+    const instValue = (G, x) => (x.faceUp ? (powerOf(x, G) || 0) + (cardOf(x).level || 0) * 1000 : 0);
+    // 寝ているとエンドフェイズに破壊されるイジン（織田信長など）は、決め手のとき以外アタックさせない
+    const diesIfTapped = x => x.faceUp && /エンドフェイズが開始したとき、これが寝ているなら破壊/.test(normTxt(cardOf(x).rule_text));
+
+    /* 防御側がアタッカー全員を必要数ブロックできるか（できなければ攻撃側の勝ち）。
+       atks: [{ inst, need }]、blockers: ブロックに使えるカード。制約の厳しいアタッカーから順に、融通の利かないブロッカーを当てる */
+    function coverable(G, atks, blockers) {
+      const pool = blockers.slice();
+      const opts = a => pool.filter(b => canBlockAttacker(G, b, a.inst));
+      const list = atks.slice().sort((x, y) => (opts(x).length - x.need) - (opts(y).length - y.need));
+      for (const a of list) {
+        for (let k = 0; k < a.need; k++) {
+          const cand = opts(a);
+          if (!cand.length) return false;
+          cand.sort((p, q) => (p.faceUp ? 0 : 1) - (q.faceUp ? 0 : 1));   // ガーディアン（誰でもブロックできる）は後に取っておく
+          pool.splice(pool.indexOf(cand[0]), 1);
         }
       }
-      // 余ったブロッカーの加勢：ガーディアン（裏向き）は防御に使うと必ず破壊されるので、必要数を超えて出さない。
-      // 表向きのイジンだけが、足し合わせてアタッカーに勝てる（パワー合計がアタッカー以上になる）場合に限って加勢する。
-      const helpers = a => (annaThreat ? [] : pool.filter(b => b.faceUp && canBlockAttacker(G, b, a)));   // アンナがいるときは、イジンの加勢はしない
-      for (const a of order) {
+      return true;
+    }
+    const asAtk = (G, list) => list.map(inst => ({ inst, need: requiredBlockers(inst, G) }));
+
+    /* S でアタックしたあと、次の相手ターンに相手の全イジンのアタックを防ぎきれるか */
+    function safeAfter(G, pi, S) {
+      const me = G.players[pi], opp = G.players[1 - pi];
+      const myBlk = me.field.filter(x =>
+        (!x.faceUp && !S.includes(x)) ||
+        (isIjinUp(x) && !kwOf(x).cantBlock && (!S.includes(x) || kwOf(x).watcher)));
+      return coverable(G, asAtk(G, opp.field.filter(isIjinUp)), myBlk);
+    }
+
+    function cpuChooseAttack(G, pi) {
+      const E = eligibleAttackers(G, pi);
+      if (!E.length) return { list: [], why: '' };
+      const oppB = eligibleBlockers(G, 1 - pi);
+      if (!coverable(G, asAtk(G, E), oppB)) return { list: E, why: '詰み（相手はブロックしきれない）' };
+      const oppIjin = oppB.filter(b => b.faceUp);
+      const safe = E.filter(a => {
+        if (diesIfTapped(a)) return false;
         const pa = attackPowerOf(a, G);
-        const mine = () => Object.keys(assign).filter(k => assign[k] === a.uid).map(k => G.players[defIdx].field.find(x => x.uid === Number(k)));
+        const t = oppIjin.filter(b => canBlockAttacker(G, b, a)).map(b => blockPowerOf(b, G)).sort((x, y) => y - x);
+        return !t.length || (t[0] < pa && (t.length < 2 || t[0] + t[1] < pa));
+      }).sort((a, b) => attackPowerOf(b, G) - attackPowerOf(a, G));
+      if (!safe.length) return { list: [], why: '' };
+      if (!safeAfter(G, pi, [])) return { list: safe, why: '守りきれないので攻める' };
+      // 守りが足りなくなるなら、ブロックに強いイジンから順にアタッカーから外して残す
+      const S = safe.slice();
+      while (S.length && !safeAfter(G, pi, S)) {
+        const keep = S.filter(x => !kwOf(x).watcher).sort((a, b) => (b.faceUp ? 1 : 0) - (a.faceUp ? 1 : 0) || blockPowerOf(b, G) - blockPowerOf(a, G))[0] || S[S.length - 1];
+        S.splice(S.indexOf(keep), 1);
+      }
+      return { list: S, why: S.length ? '安全なアタック' : '' };
+    }
+
+    /* ブロック：倒されずに勝てるイジン → ガーディアン（残りが多いとき）→ 相討ち → ガーディアン → 捨て身のイジン の順に選ぶ */
+    function cpuChooseBlocks(G, defIdx) {
+      const atks = G.battle.attackers.map(u => G.players[G.current].field.find(x => x.uid === u)).filter(Boolean);
+      const D = G.players[defIdx];
+      const pool = eligibleBlockers(G, defIdx);
+      // アンナ・パブロワが戦場にいるときは、ブロッカーのイジンを手札に戻されてしまうので、ガーディアン（裏向き）を優先する
+      const annaThreat = annaOnField(G) > 0;
+      const guardsLeft = () => pool.filter(b => !b.faceUp).length;
+      const assign = {};
+      const order = atks.slice().sort((a, b) => requiredBlockers(b, G) - requiredBlockers(a, G));
+      // 先に全体が守れるか確認：守れないなら（どうせ負け）少しでも多く防ぐ
+      for (const a of order) {
+        const need = requiredBlockers(a, G);
+        const pa = attackPowerOf(a, G);
+        const av = instValue(G, a) || 3000;
+        let sum = 0;
+        for (let k = 0; k < need; k++) {
+          const cand = pool.filter(b => canBlockAttacker(G, b, a));
+          if (!cand.length) break;
+          const score = b => {
+            if (!b.faceUp) return annaThreat ? 100 : (guardsLeft() > 2 ? 60 : 30);
+            if (annaThreat) return 0;
+            const bp = blockPowerOf(b, G), tot = sum + bp;
+            if (bp > pa || (tot >= pa && bp > pa - sum)) return 90 - bp / 1000;        // 生き残って勝てる（小さい方を使う）
+            if (tot >= pa) return instValue(G, b) <= av ? 50 : 20;                   // 相討ち：相手の方が価値が高ければ良い取引
+            return 10 - instValue(G, b) / 10000;                                   // 捨て身（価値の低いイジンから）
+          };
+          cand.sort((x, y) => score(y) - score(x));
+          const b = cand[0];
+          pool.splice(pool.indexOf(b), 1);
+          assign[b.uid] = a.uid;
+          sum += b.faceUp ? blockPowerOf(b, G) : 0;
+        }
+      }
+      // 余ったイジンの加勢：足し合わせてアタッカーに勝てる（パワー合計がアタッカー以上になる）場合に限る
+      if (!annaThreat) for (const a of order) {
+        const pa = attackPowerOf(a, G);
+        const mine = () => Object.keys(assign).filter(k => assign[k] === a.uid).map(k => D.field.find(x => x.uid === Number(k)));
         let sum = mine().reduce((t, b) => t + (b && b.faceUp ? blockPowerOf(b, G) : 0), 0);
         if (sum >= pa) continue;
-        const cand = helpers(a).sort((x, y) => blockPowerOf(y, G) - blockPowerOf(x, G));
+        const cand = pool.filter(b => b.faceUp && canBlockAttacker(G, b, a)).sort((x, y) => blockPowerOf(y, G) - blockPowerOf(x, G));
         const add = [];
         for (const h of cand) { if (sum >= pa) break; add.push(h); sum += blockPowerOf(h, G); }
         if (sum >= pa) add.forEach(h => { assign[h.uid] = a.uid; pool.splice(pool.indexOf(h), 1); });
@@ -867,17 +947,110 @@
       return declareBlocks(G, defIdx, cpuChooseBlocks(G, defIdx));
     }
 
+    /* ---------- カード効果の自動処理（CPU用）。文を「。」で区切り、すべての文が既知の書式なら処理する ---------- */
+    const EFFECT_RULES = [
+      { re: /^(?:自分は)?([1-3１-３一二三])ドローする$/, run: (G, pi, m) => { manualDraw(G, pi, KNUM[m[1]]); } },
+      { re: /^イジン召喚権\+([1-3])する$/, run: (G, pi, m) => { G.players[pi].summon += Number(m[1]); } },
+      { re: /^マリョク配置権\+([1-3])する$/, run: (G, pi, m) => { G.players[pi].manaPlace += Number(m[1]); } },
+      { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を裏のまま魔力ゾーンに置く$/, run: (G, pi, m) => {
+        const P = G.players[pi]; for (let k = 0; k < KNUM[m[1]] && P.deck.length; k++) P.mana.push(mkInst(P.deck.pop(), { faceUp: false })); } },
+      { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を(?:裏向きの)?ガーディアン(?:にして|として)戦場に置く$/, run: (G, pi, m) => {
+        for (let k = 0; k < KNUM[m[1]]; k++) manualGuardianFromDeck(G, pi); } },
+      { re: /^相手の戦場のパワー(\d+)以下のイジン1体を破壊する$/, run: (G, pi, m) => {
+        const t = G.players[1 - pi].field.filter(x => isIjinUp(x) && powerOf(x, G) <= Number(m[1]) && !isIndestructible(G, x)).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
+        if (t) manualDestroy(G, 1 - pi, t.uid); },
+        ok: (G, pi, m) => G.players[1 - pi].field.some(x => isIjinUp(x) && powerOf(x, G) <= Number(m[1]) && !isIndestructible(G, x)) },
+    ];
+    const effectSentences = text => normTxt(text).replace(/（[^）]*）/g, '').split(/[。\n]+/).map(s => s.trim()).filter(Boolean);
+    /* 能力テキストをCPUが自動処理できるか（できるなら、その文ごとの処理を返す） */
+    function effectPlan(text) {
+      const sents = effectSentences(text);
+      if (!sents.length) return null;
+      const plan = [];
+      for (const s of sents) {
+        const r = EFFECT_RULES.find(x => x.re.test(s));
+        if (!r) return null;
+        plan.push({ r, m: s.match(r.re) });
+      }
+      return plan;
+    }
+    function cpuResolve(G, pi, card, text) {
+      const plan = effectPlan(text);
+      if (!plan) return false;
+      plan.forEach(({ r, m }) => r.run(G, pi, m));
+      log(G, `　${card.name}の能力をCPUが自動処理しました`);
+      return true;
+    }
+
+    /* ---------- マリョク配置：足りない色を補う表のマリョク → なければ一番使い道の薄いカードを裏で ---------- */
+    function handNeedColors(P) {
+      const have = manaInfo(P).colors, need = {};
+      P.hand.forEach(i => { const c = cardOf(i); if (c.type !== 'マリョク') colorsOf(c).forEach(ch => { if (!have.has(ch)) need[ch] = (need[ch] || 0) + 1; }); });
+      return need;
+    }
+    function cardUsefulness(G, pi, inst) {
+      const P = G.players[pi], c = cardOf(inst), cap = manaInfo(P).cap;
+      const dup = P.hand.filter(x => cardOf(x).name === c.name).length > 1 ? -2 : 0;
+      if (c.type === 'イジン') return (c.level <= cap + 2 ? 10 : 4) + (c.power || 0) / 2000 + dup;
+      if (c.type === 'ハイケイ') return 7 + dup;
+      if (c.type === 'マホウ') return (effectPlan(SR.abilityText(c, 'mahou') || '') ? 6 : 1) + dup;
+      return 5;
+    }
     function cpuPlaceMana(G, pi) {
       const P = G.players[pi];
-      if (P.manaPlace < 1 || !P.hand.length) return;
+      if (P.manaPlace < 1 || !P.hand.length) return false;
       const manaCards = P.hand.filter(i => cardOf(i).type === 'マリョク');
-      if (manaCards.length && rng() < 0.75) {
-        placeMana(G, pi, rand(manaCards).uid, true);
-      } else {
-        // 裏向きに置くのは、CPUが使わないマホウ・ハイケイを優先
-        const junk = P.hand.filter(i => !['イジン', 'マリョク'].includes(cardOf(i).type));
-        placeMana(G, pi, rand(junk.length ? junk : P.hand).uid, false);
+      if (manaCards.length) {
+        const need = handNeedColors(P);
+        const sc = i => colorsOf(cardOf(i)).reduce((s, ch) => s + (need[ch] ? 3 + need[ch] : 0), 0) + (cardOf(i).level || 0);
+        const best = manaCards.slice().sort((a, b) => sc(b) - sc(a))[0];
+        return placeMana(G, pi, best.uid, true).ok;
       }
+      // 手札1枚で、それが今すぐ使えるなら置かない
+      if (P.hand.length === 1 && playProblems(G, pi, cardOf(P.hand[0])).length === 0) return false;
+      const junk = P.hand.slice().sort((a, b) => cardUsefulness(G, pi, a) - cardUsefulness(G, pi, b))[0];
+      return placeMana(G, pi, junk.uid, false).ok;
+    }
+
+    /* ---------- 召喚・ハイケイ・マホウの選び方 ---------- */
+    function ijinScore(G, pi, c) {
+      const k = parseCard(c);
+      return cardValue(c) + (k.pressure - 1) * 1500 + (k.haste ? 800 : 0) + (k.watcher ? 400 : 0) + (k.noIjinBlock ? 800 : 0);
+    }
+    function cpuSummon(G, pi) {
+      const P = G.players[pi];
+      if (P.summon < 1) return false;
+      const cands = P.hand.filter(i => cardOf(i).type === 'イジン' && playProblems(G, pi, cardOf(i)).length === 0);
+      if (!cands.length) return false;
+      const best = cands.sort((a, b) => ijinScore(G, pi, cardOf(b)) - ijinScore(G, pi, cardOf(a)))[0];
+      return summon(G, pi, best.uid).ok;
+    }
+    function cpuHaikei(G, pi) {
+      const P = G.players[pi];
+      const names = new Set(P.field.filter(x => x.faceUp).map(x => cardOf(x).name));
+      const c = P.hand.find(i => cardOf(i).type === 'ハイケイ' && !names.has(cardOf(i).name) && playProblems(G, pi, cardOf(i)).length === 0);
+      return c ? useHaikei(G, pi, c.uid).ok : false;
+    }
+    /* 魔力コストの払い方：裏向き → 色が重複している表向き → レベルの低い表向き の順に墓地へ */
+    function chooseMahouPay(P, cost) {
+      const colorCount = {};
+      P.mana.filter(m => m.faceUp).forEach(m => colorsOf(cardOf(m)).forEach(ch => { colorCount[ch] = (colorCount[ch] || 0) + 1; }));
+      const sc = m => (!m.faceUp ? 0 : 10 + (colorsOf(cardOf(m)).some(ch => colorCount[ch] === 1) ? 20 : 0) + (cardOf(m).level || 0));
+      return P.mana.slice().sort((a, b) => sc(a) - sc(b)).slice(0, cost).map(m => m.uid);
+    }
+    function cpuMahou(G, pi) {
+      const P = G.players[pi];
+      for (const i of P.hand) {
+        const c = cardOf(i);
+        if (c.type !== 'マホウ' || playProblems(G, pi, c).length) continue;
+        const plan = effectPlan(SR.abilityText(c, 'mahou') || '');
+        if (!plan || plan.some(p => p.r.ok && !p.r.ok(G, pi, p.m))) continue;   // 自動処理できない／対象がいない
+        const cost = c.magic_cost || 0;
+        // 魔力ゾーンを払うと、手札のイジンが出せなくなるほど減らさない（魔力ゾーンが5枚以上あれば気にしない）
+        if (cost > 0 && P.mana.length - cost < 4 && P.hand.some(x => cardOf(x).type === 'イジン' && cardOf(x).level > manaInfo(P).cap - cost)) continue;
+        return useMahou(G, pi, i.uid, chooseMahouPay(P, cost)).ok;
+      }
+      return false;
     }
 
     /* 1手ずつ進める。戻り値: 'continue' | 'await_block' | 'turnEnded' | 'over' | 'idle' */
@@ -886,33 +1059,44 @@
       const pi = G.current;
       if (!G.aiPlayers.has(pi)) return 'idle';
       if (G.battle) return 'await_block';
-      const P = G.players[pi];
-      switch (G.cpuStage) {
-        case 'mana':
-          G.cpuStage = 'summon';
-          cpuPlaceMana(G, pi);
-          return 'continue';
-        case 'summon': {
-          const cands = P.hand.filter(i => cardOf(i).type === 'イジン' && playProblems(G, pi, cardOf(i)).length === 0);
-          if (P.summon > 0 && cands.length) { summon(G, pi, rand(cands).uid); return 'continue'; }
-          G.cpuStage = 'attack';
-          return 'continue';
-        }
-        case 'attack': {
-          G.cpuStage = 'after';
-          const E = eligibleAttackers(G, pi);
-          if (E.length && rng() < 0.65) {
-            let chosen = E.filter(() => rng() < 0.6);
-            if (!chosen.length) chosen = [rand(E)];
-            declareAttack(G, pi, chosen.map(x => x.uid));
-            if (G.aiPlayers.has(1 - pi)) cpuAutoBlock(G);
-            else return 'await_block';
+      // 何もしなかった段階は飛ばして、行動が起きたところで1手として返す（画面の演出の間隔をそろえるため）
+      for (;;) {
+        switch (G.cpuStage) {
+          case 'mana':
+            G.cpuStage = 'haikei';
+            if (cpuPlaceMana(G, pi)) return 'continue';
+            break;
+          case 'haikei':
+            if (cpuHaikei(G, pi)) return 'continue';
+            G.cpuStage = 'summon';
+            break;
+          case 'summon':
+            if (cpuSummon(G, pi)) return 'continue';
+            G.cpuStage = 'mahou';
+            break;
+          case 'mahou':
+            if (cpuMahou(G, pi)) return 'continue';
+            G.cpuStage = 'summon2';
+            break;
+          case 'summon2':   // マホウで召喚権が増えた・ドローした場合にもう一度
+            if (cpuSummon(G, pi)) return 'continue';
+            G.cpuStage = 'attack';
+            break;
+          case 'attack': {
+            G.cpuStage = 'after';
+            if (G.battleUsed || G.winner !== null) break;
+            const { list, why } = cpuChooseAttack(G, pi);
+            if (!list.length) break;
+            log(G, `${nm(G, pi)}の判断：${why}`);
+            declareAttack(G, pi, list.map(x => x.uid));
+            if (G.aiPlayers.has(1 - pi)) { cpuAutoBlock(G); return G.winner !== null ? 'over' : 'continue'; }
+            return 'await_block';
           }
-          return 'continue';
+          default:
+            endTurn(G, pi);
+            return G.winner !== null ? 'over' : 'turnEnded';
         }
-        default:
-          endTurn(G, pi);
-          return G.winner !== null ? 'over' : 'turnEnded';
+        if (G.winner !== null) return 'over';
       }
     }
 
@@ -922,7 +1106,8 @@
       manualNoIjin, manualEquip, manualUnequip, manualState, isIndestructible, annaOnField, eligibleAttackers, eligibleBlockers, requiredBlockers, canBlockAttacker, ijinUnblockable,
       playProblems, summonInfo, manaInfo, parseCard, kwOf, powerOf, attackPowerOf, blockPowerOf, canAct,
       manualMove, manualTap, manualFlip, manualDraw, manualMill, manualRights, manualGuardianFromDeck, manualDestroy, manualPower,
-      arenaOn, triggerInfo, resolveAnna, resolvePending
+      arenaOn, triggerInfo, resolveAnna, resolvePending,
+      effectPlan, cpuChooseAttack
     };
   }
 
