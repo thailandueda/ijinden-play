@@ -317,7 +317,7 @@
         : kind === 'mana' ? (autoManaFromDeck(G, pi, card, text) || staticOnly(card, text))
         : staticOnly(card, text);   // 常在能力（パワー補正）やハイケイのレベル条件だけなら、エンジンが自動で計算している
       const prevSrc = G.srcKind; G.srcKind = kind;   // 能力の出どころ（炎上がる天守閣「戦場の能力によって」の判定用）
-      const autoCpu = !auto && G.aiPlayers.has(pi) && cpuResolve(G, pi, card, text, { inst, kind });
+      const autoCpu = !auto && (G.aiPlayers.has(pi) ? cpuResolve(G, pi, card, text, { inst, kind }) : humanAuto(G, pi, card, text, { inst, kind }));
       G.srcKind = prevSrc;   // CPUのカード効果（読める書式・対応済みカードだけ）
       G.fx.push({ type: 'ability', pi, kind, cardId: card.id, name: card.name, text, uid: inst ? inst.uid : null, auto: auto || autoCpu });
       if (!auto && !autoCpu) log(G, `　${card.name}の能力：${text.replace(/\n/g, ' ')}（自動処理されません）`);
@@ -520,7 +520,7 @@
       const wokeGreen = P.field.filter(c => c.tapped && !(c.frozenUntil >= G.turn) && c.faceUp && cardOf(c).type === 'イジン' && ijinHasColor(G, c, '緑')).length;
       P.field.forEach(c => { if (!(c.frozenUntil >= G.turn)) c.tapped = false; });   // ピーコック（青魔導）で起きないカードは寝たまま
       // 劉備「自分の戦場の緑のイジンが起きたとき、1ドローする」（CPU）
-      if (wokeGreen && !pillarOn(G) && G.aiPlayers.has(pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) P.field.filter(x => x.faceUp && !x.silenced && /自分の戦場の緑のイジンが起きたとき、1ドローする/.test(cardOf(x).rule_text || '')).forEach(x => {
+      if (wokeGreen && !pillarOn(G) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) P.field.filter(x => x.faceUp && !x.silenced && /自分の戦場の緑のイジンが起きたとき、1ドローする/.test(cardOf(x).rule_text || '')).forEach(x => {
         for (let k = 0; k < wokeGreen && P.deck.length; k++) P.hand.push(mkInst(P.deck.pop()));
         log(G, `　${cardOf(x).name}の効果：緑のイジンが起きたので${wokeGreen}ドロー`);
       });
@@ -1194,6 +1194,7 @@
         zoneArr(P, to).push(inst);
       }
       if (from === 'field' && to === 'grave' && inst.faceUp) fieldToGraveLoss(G, pi, inst);
+      if (from === 'grave' && to !== 'grave') graveLeft(G, pi);   // 親鸞「カードが墓地から離れたとき、1ドロー」
       if (to === 'mana' && inst.faceUp) abilityFx(G, pi, c, 'mana', inst);
       else if (to === 'field' && inst.faceUp && c.type !== 'マリョク') { abilityFx(G, pi, c, 'field', inst); if (c.type === 'ハイケイ') onHaikeiPlaced(G, pi, inst); }
       const label = (G.aiPlayers.has(pi) && !inst.faceUp && from !== 'grave') ? 'カード' : c.name;
@@ -1500,8 +1501,12 @@
     }
     // エリザベス1世「カードが裏向きで自分の魔力ゾーンに置かれたとき、1ドローする」「能力によってカードが自分の魔力ゾーンを離れるたび、相手のパワー3000以下のイジン1体を破壊（ターンに1回）」
     function onFaceDownMana(G, pi) {
-      if (!G.aiPlayers.has(pi) || pillarOn(G)) return;
-      G.players[pi].field.filter(x => x.faceUp && !x.silenced && /カードが裏向きで自分の魔力ゾーンに置かれたとき、1ドローする/.test(cardOf(x).rule_text || '')).forEach(x => manualDraw(G, pi, 1, cardOf(x).name));
+      if (pillarOn(G) || (G.cpuNoEffects && G.cpuNoEffects.has(pi))) return;
+      G.players[pi].field.filter(x => x.faceUp && !x.silenced && /カードが裏向きで自分の魔力ゾーンに置かれたとき、1ドローする/.test(cardOf(x).rule_text || '')).forEach(x => {
+        if (/この能力はターンに1回しか発動しない/.test(cardOf(x).rule_text || '')) { if (x.fdTurn === G.turn) return; x.fdTurn = G.turn; }
+        manualDraw(G, pi, 1, cardOf(x).name);
+        if (!G.aiPlayers.has(pi)) G.fx.push({ type: 'ability', pi, kind: 'mana', cardId: x.cardId, name: cardOf(x).name, text: '1ドロー', uid: x.uid, auto: true });
+      });
     }
     function onManaLeft(G, pi) {
       if (!G.aiPlayers.has(pi) || pillarOn(G)) return;
@@ -1563,7 +1568,7 @@
         G.players[pi].field.filter(m => m.faceUp && !m.silenced && /「航海」を持つイジンが自分の戦場に置かれたとき、イジン召喚権\+1する/.test(cardOf(m).rule_text || '')).forEach(m => { G.players[pi].summon += 1; log(G, `　${cardOf(m).name}：「航海」を持つイジンが置かれたので、イジン召喚権+1`); });
       // 足利義政「赤のイジンが自分の戦場に置かれたときに発動できる」など（自分の戦場のカード）
       G.players[pi].field.forEach(x => {
-        if (!G.aiPlayers.has(pi) || !x.faceUp || x.silenced) return;
+        if (!x.faceUp || x.silenced) return;   // あなたのカードは cpuTrigger がドロー系だけ自動にする
         const m = normTxt(cardOf(x).rule_text).match(/(赤|青|緑|黄|紫)のイジンが自分の戦場に置かれたときに発動できる/);
         if (m && ijinHasColor(G, inst, m[1])) cpuTrigger(G, pi, x, /のイジンが自分の戦場に置かれたときに発動できる/, 'ownIjin');
         const t = normTxt(cardOf(x).rule_text).match(/「([^」]+)」イジンが自分の戦場に置かれたときに発動できる/);   // 本居宣長
@@ -1678,7 +1683,12 @@
     }
     // CPUのメインフェイズ開始時・エンドフェイズ開始時の能力
     function cpuPhaseTriggers(G, pi, which) {
-      if (!G.aiPlayers.has(pi)) return;
+      if (!G.aiPlayers.has(pi)) {   // あなたのカード：メインフェイズ開始時・エンドフェイズ開始時のドロー系だけ自動（ニュートンなど）
+        if (pillarOn(G) || which === 'oppEnd') return;
+        const re = which === 'mainStart' ? /自分のメインフェイズが開始したとき/ : /自分のエンドフェイズが開始したとき/;
+        G.players[pi].field.slice().forEach(x => { if (x.faceUp && !x.silenced && re.test(cardOf(x).rule_text || '')) cpuTrigger(G, pi, x, re, which); });
+        return;
+      }
       const P = G.players[pi];
       const re = which === 'mainStart' ? /メインフェイズが開始したとき/ : which === 'oppEnd' ? /相手のエンドフェイズが開始したとき/ : /自分のエンドフェイズが開始したとき/;
       if (which === 'oppEnd') { if (!pillarOn(G)) P.field.slice().forEach(x => { if (re.test(cardOf(x).rule_text || '')) cpuTrigger(G, pi, x, re, which); }); return; }
@@ -1720,9 +1730,12 @@
 
     // 親鸞「カードが墓地から離れたときに発動できる。1ドローする」（自分の墓地）
     function graveLeft(G, pi) {
-      if (!G.aiPlayers.has(pi) || (G.cpuNoEffects && G.cpuNoEffects.has(pi)) || pillarOn(G)) return;
+      if ((G.cpuNoEffects && G.cpuNoEffects.has(pi)) || pillarOn(G)) return;
       G.players[pi].field.filter(x => x.faceUp && !x.silenced && /カードが墓地から離れたときに発動できる。1ドローする/.test(normTxt(cardOf(x).rule_text))).forEach(x => {
-        if (G.players[pi].deck.length > 5) manualDraw(G, pi, 1, `${cardOf(x).name}（カードが墓地から離れた）`);
+        if (G.players[pi].deck.length > 5) {
+          manualDraw(G, pi, 1, `${cardOf(x).name}（カードが墓地から離れた）`);
+          if (!G.aiPlayers.has(pi)) G.fx.push({ type: 'ability', pi, kind: 'grave', cardId: x.cardId, name: cardOf(x).name, text: '1ドロー', uid: x.uid, auto: true });
+        }
       });
     }
 
@@ -3367,6 +3380,16 @@
       { re: /^([1-3])ドローして、このターンのマホウ使用に際し、手札のマホウは「魔力コスト0」になる$/, run: (G, pi, m) => {
         manualDraw(G, pi, Number(m[1]), '効果'); G.players[pi].freeMahouTurn = G.turn; log(G, '　効果：このターン、手札のマホウは魔力コスト0'); } },
       { re: /^([1-3])ドローして、これを破壊する$/, run: (G, pi, m, ctx) => { manualDraw(G, pi, Number(m[1]), '効果'); if (ctx.inst) manualDestroy(G, pi, ctx.inst.uid, '効果'); } },
+      // 「自分の戦場のハイケイ1つにつき1ドローする」（運慶）・「自分の戦場の「美術」イジン1体につき1ドローする」（渡辺崋山）・「相手の戦場のハイケイ1つにつき1ドローする」（ヒコック）
+      { re: /^(自分|相手)の戦場の(ハイケイ|イジン|「([^」]+)」イジン)1(?:つ|体)につき1ドローする$/, run: (G, pi, m) => {
+        const Q = G.players[m[1] === '自分' ? pi : 1 - pi];
+        const n = Q.field.filter(x => x.faceUp && (m[2] === 'ハイケイ' ? cardOf(x).type === 'ハイケイ' : cardOf(x).type === 'イジン' && (!m[3] || hasTrait(cardOf(x), m[3])))).length;
+        if (n) manualDraw(G, pi, n, '効果'); else log(G, '　効果：数えるカードがないのでドローしません'); } },
+      // ドローの前の「〜なら発動する」条件（狩野永徳・狩野山楽・陳寿・紡績工場など）
+      { human: true, re: /^戦場に「([^」]+)」イジンがいるなら発動する$/, run: (G, pi, m) => G.players.some(Q => Q.field.some(x => isIjinUp(x) && traitOn(G, x, m[1]))) },
+      { human: true, re: /^(赤|青|緑|黄|紫)のイジンが戦場にいるなら発動する$/, run: (G, pi, m) => G.players.some(Q => Q.field.some(x => isIjinUp(x) && ijinHasColor(G, x, m[1]))) },
+      { human: true, re: /^(?:執筆 - )?(?:ハイケイが戦場に置かれたとき、)?戦場の(赤|青|緑|黄|紫)のイジンが(\d+)体以上なら発動する$/, run: (G, pi, m) => G.players.reduce((t, Q) => t + Q.field.filter(x => isIjinUp(x) && ijinHasColor(G, x, m[1])).length, 0) >= Number(m[2]) },
+      { human: true, re: /^魔力ゾーンに裏のカードが(\d+)つ以上あるなら、([1-3])ドローする$/, run: (G, pi, m) => { if (G.players.reduce((t, Q) => t + Q.mana.filter(x => !x.faceUp).length, 0) >= Number(m[1])) manualDraw(G, pi, Number(m[2]), '効果'); else log(G, '　効果：条件を満たさないのでドローしません'); } },
       { re: /^自分のイジン召喚権1つにつき1ドローする$/, run: (G, pi) => { const n = G.players[pi].summon; if (n) manualDraw(G, pi, n, '効果'); } },
       // 相手のイジンを裏にして（持ち主の）魔力ゾーンへ（紫式部の執筆）：一番価値の高いもの
       { re: /^相手の戦場のイジン1体を裏にして魔力ゾーンに置く$/, run: (G, pi) => {
@@ -3391,7 +3414,8 @@
     const TRIG_PREFIX = /^(?:[^\s、。-]{1,6} - )?(?:この能力は、?)?(?:これが)?(?:マリョク配置によって)?(?:(?:魔力ゾーン|戦場)に置かれた|アタッカーになった|ブロッカーになった|破壊された)とき(?:に発動する)?、|^(?:[^\s、。-]{1,6} - )?(?:ハイケイが戦場に置かれる(?:たび|とき)|相手の戦場のイジンが破壊されるたび|ガーディアンが自分の戦場に置かれるたび|マリョク配置によってカードが自分の魔力ゾーンに置かれたとき|自分のエンドフェイズが開始したとき)、/;
     const TRIG_ONLY = /^(?:この能力は、?)?(?:これが)?(?:マリョク配置によって)?(?:魔力ゾーン|戦場)に置かれたときに発動する$/;   // 「この能力は、これが〜に置かれたときに発動する。」だけの文
     const TRIG_ONLY2 = /^[^、]*(?:とき|たび)に発動(?:する|できる)$/;   // 「赤のイジンが自分の戦場に置かれたときに発動できる。」など、条件だけの文
-    const effectSentences = text => normTxt(text).replace(/（[^）]*）/g, '').split(/[。\n]+/).map(s => s.trim().replace(TRIG_PREFIX, '')).filter(s => s && !TRIG_ONLY.test(s) && !TRIG_ONLY2.test(s));
+    const TRIG_ONLY3 = /^(?:[^ 　]+ - )?この能力は、[^。]*(?:とき|たび)に(?:戦場か墓地|戦場|魔力ゾーン|墓地)?で?発動(?:する|できる)$/;   // 「この能力は、ハイケイが…置かれたときに戦場で発動できる。」
+    const effectSentences = text => normTxt(text).replace(/（[^）]*）/g, '').split(/[。\n]+/).map(s => s.trim().replace(TRIG_PREFIX, '')).filter(s => s && !TRIG_ONLY.test(s) && !TRIG_ONLY2.test(s) && !TRIG_ONLY3.test(s));
     /* 能力テキストをCPUが自動処理できるか（できるなら、その文ごとの処理を返す） */
     function effectPlan(text) {
       const sents = effectSentences(text);
@@ -3403,6 +3427,24 @@
         plan.push({ r, m: s.match(r.re) });
       }
       return plan;
+    }
+    /* あなた（CPUでない側）のカードの効果のうち、選ぶものがない「ドロー」系（Nドロー・ハイケイ1つにつきドロー・召喚権／配置権+N、
+       「〜なら発動する」の条件つき）は自動で処理する。コスト・手札の選択・相手が関わるものは手動のまま */
+    const HUMAN_SAFE = r => { if (r.human) return true; const s = r.re.source; return /ドロー|召喚権|配置権|なら(?:発動|、)/.test(s) && !/墓地|破壊|手札|山札の上から|相手は|するか|裏|戻|寝/.test(s); };
+    function humanAutoPlan(G, card, text) {
+      const t = manualPart(card, text) || '';
+      if (!t || !/ドロー/.test(t)) return null;
+      const plan = effectPlan(t);
+      return plan && plan.every(({ r }) => HUMAN_SAFE(r)) ? plan : null;
+    }
+    function humanAuto(G, pi, card, text, ctx) {
+      if (pillarOn(G) && ctx.kind !== 'mahou' && ctx.kind !== 'legacy') return false;
+      const plan = humanAutoPlan(G, card, text);
+      if (!plan) return false;
+      if (/発動できる/.test(text) && G.players[pi].deck.length <= 3) return false;   // 任意の能力で山札が少ないときは、自分で決める
+      log(G, `　${card.name}の能力を自動処理します（ドロー）`);
+      for (const { r, m } of plan) if (r.run(G, pi, m, ctx || {}) === false) { log(G, '　（条件を満たさないので、ここから先は発動しません）'); break; }
+      return true;
     }
     /* CPUのカード効果を処理する。カードごとの処理（CARD_AI）→ 書式ルール（EFFECT_RULES）の順に試す */
     function cpuResolve(G, pi, card, text, ctx) {
@@ -3425,9 +3467,14 @@
        カードの文章から該当する段落を取り出して cpuResolve に渡す。処理できなければ「自動処理されません」として表示 */
     const paraOf = (card, re) => String(card.rule_text || '').split(/\n\s*\n|\n/).map(x => x.trim()).filter(x => re.test(x)).join('\n');
     function cpuTrigger(G, pi, inst, re, kind) {
-      if (!G.aiPlayers.has(pi) || !inst || !inst.faceUp || inst.silenced) return;
+      if (!inst || !inst.faceUp || inst.silenced) return;
       const card = cardOf(inst), text = paraOf(card, re);
-      if (text) abilityFx(G, pi, card, kind, inst, text);
+      if (!text) return;
+      if (!G.aiPlayers.has(pi)) {   // あなたのカード：ドロー系だけ自動で処理（それ以外は今までどおり手動）
+        if (humanAutoPlan(G, card, text)) abilityFx(G, pi, card, kind, inst, text);
+        return;
+      }
+      abilityFx(G, pi, card, kind, inst, text);
     }
     // 破壊されたとき（自分のカード）＋「相手の戦場のイジンが破壊されるたび」（相手側のカード）
     // ジョバンニ＝ディ＝メディチ「戦場から墓地に置かれたとき、カードが自分の墓地に5つ以上あるなら、ゲームに敗北する」
@@ -3447,7 +3494,12 @@
         return 'saved';
       }
       if (cardOf(inst).type === 'イジン') G.players[1 - pi].field.forEach(x => cpuTrigger(G, 1 - pi, x, /相手の戦場のイジンが破壊されるたび/, 'oppDestroyed'));
-      if (G.aiPlayers.has(pi) && /(^|\n)\s*破壊されたとき/.test(cardOf(inst).rule_text || '')) cpuTrigger(G, pi, inst, /^破壊されたとき/, 'destroyed');
+      if (/(^|\n)\s*破壊されたとき/.test(cardOf(inst).rule_text || '')) cpuTrigger(G, pi, inst, /^破壊されたとき/, 'destroyed');
+      // 「イジンが破壊されるたび、1ドローする」（革命の広場）・「相手の戦場のガーディアンが破壊されるたび、1ドローする」（シャルル7世）：あなたのカード
+      [0, 1].forEach(q => { if (G.aiPlayers.has(q) || pillarOn(G)) return;
+        G.players[q].field.forEach(x => { if (!x.faceUp || x.silenced) return; const t = normTxt(cardOf(x).rule_text);
+          if (cardOf(inst).type === 'イジン' && /(^|\n)\s*イジンが破壊されるたび、1ドローする/.test(t)) { manualDraw(G, q, 1, `${cardOf(x).name}（イジンが破壊された）`); G.fx.push({ type: 'ability', pi: q, kind: 'destroyed', cardId: x.cardId, name: cardOf(x).name, text: '1ドロー', uid: x.uid, auto: true }); }
+        }); });
       // カトリーヌ・ド・メディシス「自分の戦場のイジンが破壊されたときに戦場で発動できる。相手の戦場のガーディアンすべてを寝かせる」
       if (cardOf(inst).type === 'イジン' && G.aiPlayers.has(pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) P.field.forEach(x => {
         if (!x.faceUp || x.silenced || !/自分の戦場のイジンが破壊されたときに戦場で発動できる。相手の戦場のガーディアンすべてを寝かせる/.test(normTxt(cardOf(x).rule_text))) return;
@@ -3480,8 +3532,13 @@
         cpuTrigger(G, q, x, /執筆 - /, 'shippitsu');
       }));
       G.cpuTrigCtx = null;
+      // あなたのカード：滝沢馬琴「執筆 - 黄のハイケイが戦場に置かれるたび、1ドローする」など（色つきハイケイの執筆ドロー）
+      if (inst) [0, 1].forEach(q => { if (G.aiPlayers.has(q)) return; G.players[q].field.forEach(x => {
+        if (!x.faceUp || x.silenced) return; const m = normTxt(cardOf(x).rule_text).match(/執筆 - (赤|青|緑|黄|紫)のハイケイが戦場に置かれるたび、1ドローする/);
+        if (m && String(cardOf(inst).color || '').includes(m[1])) { manualDraw(G, q, 1, cardOf(x).name); G.fx.push({ type: 'ability', pi: q, kind: 'haikei', cardId: x.cardId, name: cardOf(x).name, text: '1ドロー', uid: x.uid, auto: true }); }
+      }); });
       // 諸葛亮「黄のハイケイが自分の戦場に置かれるたび、1ドローする」
-      if (inst && String(cardOf(inst).color || '').includes('黄') && G.aiPlayers.has(byPi) && !(G.cpuNoEffects && G.cpuNoEffects.has(byPi)))
+      if (inst && String(cardOf(inst).color || '').includes('黄') && !(G.cpuNoEffects && G.cpuNoEffects.has(byPi)))
         G.players[byPi].field.forEach(x => {
           if (x.faceUp && !x.silenced && /黄のハイケイが自分の戦場に置かれるたび、1ドローする/.test(cardOf(x).rule_text || '')) {
             manualDraw(G, byPi, 1, cardOf(x).name);
