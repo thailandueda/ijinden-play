@@ -186,10 +186,11 @@
         const fLim = fuhito ? Number(normTxt(cardOf(fuhito).rule_text).match(/相手の戦場のレベル(\d+)以下の寝ているイジン/)[1]) : -1;
         const mozart = fieldSrc(G, o, /これが戦場にいる間、相手の戦場の「音楽」イジンと、相手の墓地のカードは能力すべてを失う/);
         const kobayashi = fieldSrc(G, o, /この能力は、相手の魔力ゾーンに裏のカードがあるなら、戦場で効果を発揮する。相手の戦場の起きているイジンは、能力すべてを失う/) && G.players[q].mana.some(m => !m.faceUp);
+        const ezo = ezoOn(G, q);   // 蝦夷共和国は自分の戦場の「志願」イジンに効く
         G.players[q].field.forEach(y => {
           if (!y.faceUp) return;
           const c = cardOf(y), t = normTxt(c.rule_text);
-          const should = !LOSE_IMMUNE.test(t) && ((kuroda && c.type === 'ハイケイ') ||
+          const should = !LOSE_IMMUNE.test(t) && ((kuroda && c.type === 'ハイケイ') || (ezo && c.type === 'イジン' && traitOn(G, y, '志願')) ||
             (c.type === 'イジン' && ((fLim >= 0 && y.tapped && (c.level || 0) <= fLim) || (kobayashi && !y.tapped) || (mozart && hasTrait(c, '音楽')))));
           if (should && !y.silenced) y.silenced = 'aura';
           else if (!should && y.silenced === 'aura') y.silenced = false;
@@ -197,7 +198,14 @@
       });
     }
     // 「剣術」を持つか（武者の蔵「自分の戦場のレベル2以下のイジンは「特性：剣術」を得る」）
-    const traitOn = (G, x, t) => { if (hasTrait(cardOf(x), t)) return true; const o = ownerOf(G, x); return o >= 0 && t === '剣術' && (cardOf(x).level || 0) <= 2 && !!fieldSrc(G, o, /自分の戦場のレベル2以下のイジンは「特性：剣術」を得る/); };
+    const traitOn = (G, x, t) => { if (hasTrait(cardOf(x), t)) return true; const o = ownerOf(G, x); if (o < 0) return false;
+      if (t === '剣術') return (cardOf(x).level || 0) <= 2 && !!fieldSrc(G, o, /自分の戦場のレベル2以下のイジンは「特性：剣術」を得る/);
+      // 蝦夷共和国「ガーディアンが自分の戦場にいない間、自分の戦場のレベル4以下のイジンは「特性：志願」を得る」
+      if (t === '志願') return (cardOf(x).level || 0) <= 4 && !G.players[o].field.some(isGuardianInst) && !!fieldSrc(G, o, /ガーディアンが自分の戦場にいない間、自分の戦場のレベル4以下のイジンは「特性：志願」を得る/);
+      return false; };
+    // 蝦夷共和国「自分の戦場の「志願」イジンは「モータル」を得て、他の能力すべてを失う」
+    const ezoOn = (G, o) => !!fieldSrc(G, o, /これが戦場にある間、自分の戦場の「志願」イジンは「モータル」を得て、他の能力すべてを失う/);
+    const ezoMortal = (G, x) => { const o = ownerOf(G, x); return o >= 0 && x.faceUp && cardOf(x).type === 'イジン' && ezoOn(G, o) && traitOn(G, x, '志願'); };
     // 勝鬨を持つか（風林火山「自分の戦場の「剣術」イジンは「勝鬨 - …」を得る」）
     const hasKachidoki = (G, x) => { if (!x.faceUp || x.silenced || cardOf(x).type !== 'イジン') return false; if (/勝鬨 - /.test(cardOf(x).rule_text || '')) return true;
       const o = ownerOf(G, x); return o >= 0 && traitOn(G, x, '剣術') && !!fieldSrc(G, o, /自分の戦場の「剣術」イジンは「勝鬨 - /); };
@@ -225,6 +233,12 @@
       }
       if (fieldSrc(G, o, /自分の戦場の「航海」を持つイジンは「即応」を得る/) && /航海 - /.test(cardOf(inst).rule_text || '')) out.haste = true;   // フランソワ1世
       if (fieldSrc(G, o, /自分の戦場の「剣術」イジンは「即応」を得る/) && traitOn(G, inst, '剣術')) out.haste = true;   // 武者の蔵
+      // 殿「自分のターンの間、相手の手札のカードが自分の手札のカードよりも多いなら、自分の戦場のイジンは「パワー+5000」を得る」
+      const tono = fieldSrc(G, o, /この能力は、自分のターンの間、相手の手札のカードが自分の手札のカードよりも多いなら、戦場で効果を発揮する。自分の戦場のイジンは「パワー\+(\d+)」を得る/);
+      if (tono && G.current === o && G.players[1 - o].hand.length > G.players[o].hand.length) out.power += Number(normTxt(cardOf(tono).rule_text).match(/自分の戦場のイジンは「パワー\+(\d+)」/)[1]);
+      // 黄金時代「相手の手札のカードが3つ以下なら、相手の戦場のイジンは「パワー-1000」を得る」
+      const gold = fieldSrc(G, 1 - o, /この能力は、相手の手札のカードが(\d+)つ以下なら、戦場で効果を発揮する。相手の戦場のイジンは「パワー-(\d+)」を得る/);
+      if (gold) { const gm = normTxt(cardOf(gold).rule_text).match(/相手の手札のカードが(\d+)つ以下なら[^。]*。相手の戦場のイジンは「パワー-(\d+)」/); if (G.players[o].hand.length <= Number(gm[1])) out.power -= Number(gm[2]); }
       // 蒸気機関車（装備）「これが戦場にいる間、自分の戦場のイジンは、自分の戦場のハイケイ1つにつき「パワー+500」を得る」
       F.forEach(h => { if (!h.faceUp || h.silenced || !h.equips) return; h.equips.forEach(e => { const m = normTxt(equipBody(cardOf(e))).match(/自分の戦場のイジンは、自分の戦場のハイケイ1つにつき「パワー\+(\d+)」を得る/); if (m) out.power += Number(m[1]) * F.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').length; }); });
       equipsOf(inst).forEach(e => { if (e.perColor) out.power += e.perColor * COLOR_CHARS.split('').filter(ch => ijinHasColor(G, inst, ch)).length; });   // シルククローク
@@ -240,6 +254,8 @@
       if (String(c.color || '').includes(ch)) return true;
       if (equipsOf(inst).some(e => e.colors.includes(ch))) return true;   // 装備「色：黄」など
       if (!G) return false;
+      // 火と氷の大地「相手の戦場のレベル2以下のイジンは「色：赤」を得る」
+      if (ch === '赤' && c.type === 'イジン' && (c.level || 0) <= 2) { const ow = ownerOf(G, inst); if (ow >= 0 && fieldSrc(G, 1 - ow, /これが戦場にある間、相手の戦場のレベル2以下のイジンは「色：赤」を得る/)) return true; }
       if (G.yellowTurn === G.turn && ch === '黄') return true;
       const o = ownerOf(G, inst);
       if (o >= 0 && String(c.color || '').includes('黄') && ['赤', '青', '緑'].includes(ch) &&
@@ -251,7 +267,10 @@
     // 足利義満「自分の戦場の他のイジンは「アタック+1000」を得る」
     function auraAttack(G, inst) {
       const o = ownerOf(G, inst); if (o < 0 || !inst.faceUp) return 0;
-      return G.players[o].field.reduce((t, src) => {
+      // 天下分け目の主戦場「カードが魔力ゾーンに5つ以上ある間、自分の戦場のイジンは「アタック+2000」を得る」
+      const tenka = cardOf(inst).type === 'イジン' ? G.players[o].field.filter(x => x.faceUp && !x.silenced && /カードが魔力ゾーンに(\d+)つ以上ある間、自分の戦場のイジンは「アタック\+(\d+)」を得る/.test(normTxt(cardOf(x).rule_text)))
+        .reduce((t, x) => { const m = normTxt(cardOf(x).rule_text).match(/カードが魔力ゾーンに(\d+)つ以上ある間、自分の戦場のイジンは「アタック\+(\d+)」/); return t + (G.players[o].mana.length >= Number(m[1]) ? Number(m[2]) : 0); }, 0) : 0;
+      return tenka + G.players[o].field.reduce((t, src) => {
         if (!src.faceUp || src.silenced) return t;
         if (src === inst) { const ms = normTxt(cardOf(src).rule_text).match(/これが戦場にいる間、自分の戦場の「([^」]+)」イジンは「アタック\+(\d+)」を得る/); return t + (ms && hasTrait(cardOf(inst), ms[1]) ? Number(ms[2]) : 0); }
         const m = normTxt(cardOf(src).rule_text).match(/これが戦場にいる間、自分の戦場の他のイジンは「アタック\+(\d+)」を得る/);
@@ -297,9 +316,16 @@
       const auto = onlyText ? false
         : kind === 'mana' ? (autoManaFromDeck(G, pi, card, text) || staticOnly(card, text))
         : staticOnly(card, text);   // 常在能力（パワー補正）やハイケイのレベル条件だけなら、エンジンが自動で計算している
-      const autoCpu = !auto && G.aiPlayers.has(pi) && cpuResolve(G, pi, card, text, { inst, kind });   // CPUのカード効果（読める書式・対応済みカードだけ）
+      const prevSrc = G.srcKind; G.srcKind = kind;   // 能力の出どころ（炎上がる天守閣「戦場の能力によって」の判定用）
+      const autoCpu = !auto && G.aiPlayers.has(pi) && cpuResolve(G, pi, card, text, { inst, kind });
+      G.srcKind = prevSrc;   // CPUのカード効果（読める書式・対応済みカードだけ）
       G.fx.push({ type: 'ability', pi, kind, cardId: card.id, name: card.name, text, uid: inst ? inst.uid : null, auto: auto || autoCpu });
       if (!auto && !autoCpu) log(G, `　${card.name}の能力：${text.replace(/\n/g, ' ')}（自動処理されません）`);
+      if (!auto && !autoCpu && !onlyText) {   // 常在能力など自動で効いている文は除いて、手で処理が必要な文だけを見せる
+        const rest = manualPart(card, text);
+        const last = G.fx[G.fx.length - 1];
+        if (last && last.type === 'ability' && last.cardId === card.id) { if (!rest) last.auto = true; else last.text = rest; }
+      }
     };
     // エンジンがルールとして自動で処理している文（どちらのプレイヤーでも）
     const ENFORCED = [
@@ -318,12 +344,42 @@
       /^相手は、自分と相手の墓地にあるカードと同じ名前のカードを、手札から使えない$/,                       // 和宮
       /^自分の戦場の「航海」を持つイジンは「即応」を得る$/,
       /^自分と相手の戦場のイジンは、能力によって手札に戻らない$/,
+      // ハイケイの常在能力（エンジンが両プレイヤーに適用）
+      /^これが戦場にある間、自分の戦場の『ブロック\+』能力を持つイジンと、自分の戦場のガーディアンは「能力によって破壊されない」を得る$/, /^これが戦場にある間、自分の戦場のレベル\d+以下のイジンは「ブロック\+\d+」を得る$/,   // 永遠の帝都
+      /^自分のエンドフェイズが開始したとき、自分の戦場のカードすべてを起こす$/,                               // 毘盧遮那仏像（第1弾）
+      /^能力によってこれを数える際、1つでなく2つと数える$/, /^イジンが自分の戦場に、?ちょうど2体いる間、自分の戦場のイジンは「ウォッチャー」を得る$/,   // 仁王
+      /^これが戦場にある間、自分の戦場の黄のイジンは「色：赤\s?青\s?緑」を得る$/,                          // 英傑集う大河
+      /^これが戦場にある間、自分の魔力ゾーンのマリョクは「戦場の能力によって魔力ゾーンを離れない」を得る$/, /^カードが魔力ゾーンに\d+つ以上ある間、自分の戦場のイジンは「アタック\+\d+」を得る$/,   // 天下分け目の主戦場
+      /^これが戦場にある間、自分の戦場の青のイジンは「赤のイジンにブロックされない」を得る$/, /^これが戦場にある間、相手の戦場のレベル2以下のイジンは「色：赤」を得る$/,   // 火と氷の大地
+      /^この能力は、自分のターンの間、相手の手札のカードが自分の手札のカードよりも多いなら、戦場で効果を発揮する$/, /^自分の戦場のイジンは「パワー\+\d+」を得る$/,   // 殿
+      /^この能力は、相手の手札のカードが\d+つ以下なら、戦場で効果を発揮する$/, /^相手の戦場のイジンは「パワー-\d+」を得る$/,   // 黄金時代
+      /^これが戦場にある間、自分の戦場の「志願」イジンは「モータル」を得て、他の能力すべてを失う$/, /^ガーディアンが自分の戦場にいない間、自分の戦場のレベル4以下のイジンは「特性：志願」を得る$/,   // 蝦夷共和国
+      /^これが戦場にある間、自分の戦場の『アタック\+』能力を持つイジンと、自分の戦場のガーディアンは「戦場の能力によって戦場を離れない」を得る$/,   // 炎上がる天守閣
+      /^自分がイジン召喚する際、そのイジンのレベルは、相手の戦場の色1つにつき1だけ下がる$/,                 // 遣外使節団
+      /^自分のイジン召喚において、自分の手札の『プレッシャー』能力を持つイジンのレベルは、自分と相手の戦場のイジン1体につき1だけ下がる$/,   // 蘇る青の都
+      /^この能力は、自分と相手の墓地にマホウが合わせて\d+つ以上あるなら、戦場で効果を発揮する$/, /^自分と相手の手札のマホウは魔力コストが1だけ増える$/, /^自分と相手の墓地のマホウは、能力によって墓地を離れない$/,   // 二重螺旋階段
+      /^自分と相手は『ドロー』効果で山札からカードを引く際、1つだけ多く引く$/,                                 // モダンアートの殿堂
+      /^戦場に「思想」カードがある間、自分の墓地にある「徴募」は、アタッカーが破壊されていなくても、バトルしているなら発動する$/,   // 凱旋門
+      /^これが戦場にある間「冥府発動」でない遺業能力は発動しない$/,                                            // 森閑たる離宮
+      /^特性[:：]\s*\S+$/, /^「特性[:：][^」]*」$/,                                                         // 「特性：美術」など
+      /^これのハイケイ使用に際し、これのレベルは、戦場のハイケイのレベルの合計と同じだけ下がる$/,            // 大日本沿海輿地全図
+      /^自分のメインフェイズが開始したとき、ハイケイの名前が戦場に\d+つ以上あるなら発動する$/, /^ゲームに勝利する$/,
+      /^メインフェイズが開始したとき、ターンプレイヤーの戦場にイジンがいないなら、これを破壊する$/, /^そうでなければ、ターンプレイヤーの戦場のイジン1体を破壊する$/, /^そのイジンはターンプレイヤーが選ぶ$/,   // 喀血の流行り病
       /^自分はハイケイ使用に際し、色条件を満たしていなくても手札のカードを使える$/,                         // 伊能忠敬
       /^赤か紫のカードが戦場にある間「即応」を得る$/, /^緑か黄のカードが戦場にある間「ウォッチャー」を得る$/,   // 久坂玄瑞
       /^起きているイジンが相手の戦場にいる間、自分の戦場の「思想」イジンは「ダブルプレッシャー」を得る$/, /^これが戦場にいる間「決起」は発動しない$/,   // 吉田松陰                                         // 禁制の御殿（第6弾）                                                 // フランソワ1世
       /^これが戦場にある間、自分の戦場のレベル2以下のイジンは「特性：剣術」を得る$/, /^これが戦場にある間、自分の戦場の「剣術」イジンは「即応」を得る$/,   // 武者の蔵
       /^この能力は、自分の戦場に「勝鬨」を持つイジンが\d体以上いるなら、戦場で効果を発揮する$/, /^これは「(?:ダブル|トリプル|クアドラプル)プレッシャー」を得る$/, /^アタック\+\d+$/,   // 武田信玄
     ];
+    /* 手で処理が必要な文だけを残す（自動で効く常在能力の文を除く）。全部自動なら '' */
+    function manualPart(card, text) {
+      const raw = normTxt(text).split(/\n+/).map(x => x.trim()).filter(Boolean);
+      const keep = raw.filter(line => {
+        const sents = line.replace(/（[^）]*）/g, '').split(/[。]+/).map(x => x.trim()).filter(Boolean);
+        return !(sents.length && sents.every((x, i) => ENFORCED.some(re => re.test(x)) || aurasOf({ id: `__mp_${card.id}_${i}_${x.length}`, rule_text: x }).length > 0));
+      });
+      return keep.join('\n');
+    }
     /* 能力の文がすべて「エンジンが自動で計算するもの」（パワーの常在能力・ハイケイのレベル条件）か */
     function staticOnly(card, text) {
       if (card.type === 'マホウ') return false;
@@ -346,8 +402,16 @@
       return true;
     };
     /* 「破壊されない」：手動で付けたもの（このターン / 解除するまで）と、「「音楽」イジンが自分の戦場にいる間「破壊されない」を得る」型の常在能力 */
+    // 炎上がる天守閣「自分の戦場の『アタック+』能力を持つイジンと、自分の戦場のガーディアンは「戦場の能力によって戦場を離れない」を得る」
+    function flameProtected(G, inst) {
+      if (!G || !G.srcKind || ['mahou', 'legacy', 'manual'].includes(G.srcKind)) return false;   // 戦場（と魔力ゾーン）の能力のときだけ
+      const o = G.players.findIndex(P => P.field.includes(inst)); if (o < 0) return false;
+      if (!fieldSrc(G, o, /自分の戦場の『アタック\+』能力を持つイジンと、自分の戦場のガーディアンは「戦場の能力によって戦場を離れない」を得る/)) return false;
+      return isGuardianInst(inst) || (inst.faceUp && cardOf(inst).type === 'イジン' && kwOf(inst).attack > 0);
+    }
     function isIndestructible(G, inst, byAbility) {
       if (inst.indestructible) return true;
+      if (byAbility && flameProtected(G, inst)) return true;
       // 永遠の帝都「自分の戦場の『ブロック+』能力を持つイジンと、自分の戦場のガーディアンは「能力によって破壊されない」を得る」
       if (byAbility && G) {
         const o = G.players.findIndex(P => P.field.includes(inst));
@@ -555,6 +619,10 @@
       cpuPhaseTriggers(G, 1 - G.current, 'oppEnd');
       spinningMill(G);
       if (G.finalLose && G.finalLose.turn === G.turn && G.finalLose.pi === G.current) { win(G, 1 - G.current, 'ファイナルアタックの効果（エンドフェイズに敗北）'); return { ok: true }; }
+      // 毘盧遮那仏像（第1弾）「自分のエンドフェイズが開始したとき、自分の戦場のカードすべてを起こす」（強制）
+      if (!pillarOn(G) && P.field.some(x => x.faceUp && !x.silenced && /自分のエンドフェイズが開始したとき、自分の戦場のカードすべてを起こす/.test(cardOf(x).rule_text || ''))) {
+        P.field.forEach(x => { x.tapped = false; }); log(G, '　毘盧遮那仏像の効果：自分の戦場のカードすべてを起こしました');
+      }
       // 織田信長：自分のエンドフェイズが開始したとき、これが寝ているなら破壊する
       P.field.filter(x => x.faceUp && x.tapped && cardOf(x).name === '織田信長').forEach(x => {
         log(G, '　織田信長の効果：エンドフェイズに寝ているため破壊されます');
@@ -636,6 +704,16 @@
         const n = P.grave.filter(g => cardOf(g).type === 'マホウ' && /魔導 - /.test(cardOf(g).rule_text || '')).length;
         if (n > 0) { a.auto += n; a.parts = a.parts.concat([{ name: card.name + '（墓地の『魔導』マホウ）', n }]); }
       }
+      // 遣外使節団「自分がイジン召喚する際、そのイジンのレベルは、相手の戦場の色1つにつき1だけ下がる」
+      if (card.type === 'イジン' && fieldSrc(G, pi, /自分がイジン召喚する際、そのイジンのレベルは、相手の戦場の色1つにつき1だけ下がる/)) {
+        const n = fieldColors(G, 1 - pi);
+        if (n > 0) { a.auto += n; a.parts = a.parts.concat([{ name: '遣外使節団（相手の戦場の色）', n }]); }
+      }
+      // 蘇る青の都「自分の手札の『プレッシャー』能力を持つイジンのレベルは、自分と相手の戦場のイジン1体につき1だけ下がる」
+      if (card.type === 'イジン' && parseCard(card).pressure > 1 && fieldSrc(G, pi, /自分の手札の『プレッシャー』能力を持つイジンのレベルは、自分と相手の戦場のイジン1体につき1だけ下がる/)) {
+        const n = G.players.reduce((t, Q) => t + Q.field.filter(isIjinUp).length, 0);
+        if (n > 0) { a.auto += n; a.parts = a.parts.concat([{ name: '蘇る青の都（戦場のイジン）', n }]); }
+      }
       // 豊臣秀吉「これのレベルは、自分の戦場のイジンの最も高いレベルと同じだけ下がる」
       if (card.type === 'イジン' && /これのレベルは、自分の戦場のイジンの最も高いレベルと同じだけ下がる/.test(normTxt(card.rule_text))) {
         const n = Math.max(0, ...P.field.filter(isIjinUp).map(x => cardOf(x).level || 0));
@@ -674,7 +752,13 @@
     const luther = (G, pi) => !!fieldSrc(G, 1 - pi, /相手はマホウ使用に際し、魔力ゾーンの裏のカードを墓地に置くことができない/);
     // 千利休「自分はマホウ使用に際し、自分の手札をすきなだけ墓地に置いてもよい。墓地に置いた1枚につき、手札のマホウの魔力コストは1減る」（CPUが先に手札を置いた分：costCut）
     const mahouCost = (G, pi, card) => { const P = G.players[pi]; if (P.freeMahouTurn === G.turn) return 0;
-      const cut = P.costCut && P.costCut.turn === G.turn && P.costCut.name === card.name ? P.costCut.n : 0; return Math.max(0, (card.magic_cost || 0) - cut); };
+      const cut = P.costCut && P.costCut.turn === G.turn && P.costCut.name === card.name ? P.costCut.n : 0;
+      // 二重螺旋階段「自分と相手の墓地にマホウが合わせて2つ以上あるなら、自分と相手の手札のマホウは魔力コストが1だけ増える」
+      const helix = G.players.some(Q => Q.field.some(x => x.faceUp && !x.silenced && /自分と相手の墓地にマホウが合わせて(\d+)つ以上あるなら、戦場で効果を発揮する。自分と相手の手札のマホウは魔力コストが1だけ増える/.test(cardOf(x).rule_text || '')))
+        && G.players.reduce((t, Q) => t + Q.grave.filter(g => cardOf(g).type === 'マホウ').length, 0) >= 2 ? 1 : 0;
+      return Math.max(0, (card.magic_cost || 0) + helix - cut); };
+    // 二重螺旋階段「自分と相手の墓地のマホウは、能力によって墓地を離れない」
+    const graveMahouLocked = G => G.players.some(Q => Q.field.some(x => x.faceUp && !x.silenced && /自分と相手の墓地のマホウは、能力によって墓地を離れない/.test(cardOf(x).rule_text || '')));
 
     /* ---------- メインフェイズの行動 ---------- */
     function takeFromHand(P, uid) {
@@ -824,6 +908,9 @@
       if (!att) return true;
       const bIjin = blocker.faceUp && cardOf(blocker).type === 'イジン';
       if (bIjin && ijinUnblockable(G, att)) return false;                       // ガーディアン(裏向き)はイジンではないのでブロックできる
+      // 火と氷の大地「自分の戦場の青のイジンは「赤のイジンにブロックされない」を得る」
+      if (bIjin && G && att.faceUp && !att.silenced) { const ao = ownerIdx(G, att);
+        if (ao >= 0 && ijinHasColor(G, att, '青') && ijinHasColor(G, blocker, '赤') && fieldSrc(G, ao, /これが戦場にある間、自分の戦場の青のイジンは「赤のイジンにブロックされない」を得る/)) return false; }
       const k = att.faceUp ? kwOf(att) : NEUTRAL_KW;
       if (bIjin && k.noBlockMaxPower >= 0 && blockPowerOf(blocker, G) <= k.noBlockMaxPower) return false;
       // 玄宗「自分の戦場のガーディアンはパワー6000以上のアタッカーを指定してブロッカーになれない」
@@ -979,7 +1066,7 @@
         const charmKill = !attLoses && charm && blockers.some(b => !b.faceUp) && pa <= Number(charm[1]);
         if (charmKill) log(G, `　魔除けの社の効果：ガーディアンがブロックしたため、パワー${pa}のアタッカーは破壊されます`);
         if (attLoses || charmKill) destroyedA.push(att);
-        else if (kwOf(att).mortal) { winnerReason = `${cardOf(att).name}（モータル）がバトルに勝利`; break; }
+        else if (kwOf(att).mortal || ezoMortal(G, att)) { winnerReason = `${cardOf(att).name}（モータル）がバトルに勝利`; break; }
       }
 
       const legacyFx = [];
@@ -1128,6 +1215,8 @@
     }
     function manualDraw(G, pi, n, by) {
       const P = G.players[pi];
+      // モダンアートの殿堂「自分と相手は『ドロー』効果で山札からカードを引く際、1つだけ多く引く」（効果のドロー＝ by あり）
+      if (by && n > 0 && G.players.some(Q => Q.field.some(x => x.faceUp && !x.silenced && /自分と相手は『ドロー』効果で山札からカードを引く際、1つだけ多く引く/.test(cardOf(x).rule_text || '')))) { n += 1; by = by + '（モダンアートの殿堂で+1）'; }
       // 米百俵「自分が能力によってカードを引く際、カードを引く代わりに同じ数だけマリョク配置権を増やしてもよい」（CPU）
       if (by && G.aiPlayers.has(pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi)) && fieldSrc(G, pi, /自分が能力によってカードを引く際、カードを引く代わりに同じ数だけマリョク配置権を増やしてもよい/) && wantRightsInsteadOfDraw(G, pi)) {
         P.manaPlace += n; log(G, `　${by}：米百俵の効果で、${n}ドローの代わりにマリョク配置権+${n}`); return { ok: true };
@@ -1410,6 +1499,7 @@
     function bounce(G, q, inst, by) {   // 戦場のイジンを持ち主の手札に戻す
       const P = G.players[q]; const i = P.field.indexOf(inst); if (i < 0) return false;
       if (inst.faceUp && cardOf(inst).type === 'イジン' && noBounce(G)) { log(G, `　${by}：禁制の御殿の効果で、${cardOf(inst).name}は手札に戻りません`); return false; }
+      if (flameProtected(G, inst)) { log(G, `　${by}：炎上がる天守閣の効果で、${inst.faceUp ? cardOf(inst).name : 'ガーディアン'}は戦場を離れません`); return false; }
       P.field.splice(i, 1); releaseEquips(G, q, inst);
       inst.faceUp = true; inst.tapped = false; inst.isGuardian = false; inst.silenced = false; inst.indestructible = false;
       P.hand.push(inst);
@@ -1566,7 +1656,9 @@
       const P = G.players[pi];
       const re = which === 'mainStart' ? /メインフェイズが開始したとき/ : which === 'oppEnd' ? /相手のエンドフェイズが開始したとき/ : /自分のエンドフェイズが開始したとき/;
       if (which === 'oppEnd') { if (!pillarOn(G)) P.field.slice().forEach(x => { if (re.test(cardOf(x).rule_text || '')) cpuTrigger(G, pi, x, re, which); }); return; }
-      const condOk = x => !/このターンにアタッカーが破壊されているなら/.test(cardOf(x).rule_text || '') || G.atkDestroyedTurn === G.turn;   // 徴募の条件
+      // 凱旋門「戦場に「思想」カードがある間、自分の墓地にある「徴募」は、アタッカーが破壊されていなくても、バトルしているなら発動する」
+      const gaisen = G.battleUsed && !!fieldSrc(G, pi, /戦場に「思想」カードがある間、自分の墓地にある「徴募」は、アタッカーが破壊されていなくても、バトルしているなら発動する/) && G.players.some(Q => Q.field.some(x => x.faceUp && hasTrait(cardOf(x), '思想')));
+      const condOk = x => !/このターンにアタッカーが破壊されているなら/.test(cardOf(x).rule_text || '') || G.atkDestroyedTurn === G.turn || (gaisen && P.grave.includes(x));   // 徴募の条件
       if (!pillarOn(G)) P.field.slice().forEach(x => {
         if (which === 'endPhase' && /これが寝ているなら発動する。?これを破壊する/.test(normTxt(cardOf(x).rule_text))) return;   // 織田信長はエンジンが処理
         if (re.test(cardOf(x).rule_text || '') && condOk(x)) cpuTrigger(G, pi, x, re, which);
@@ -1739,7 +1831,7 @@
       fieldToGraveLoss(G, q, x);
     }
     // 墓地のカードから、手札に戻す（山札の上に置く）ならどれか
-    const bestFromGrave = (G, pi, filt) => G.players[pi].grave.filter(filt || (() => true)).sort((a, b) => cardUsefulness(G, pi, b) - cardUsefulness(G, pi, a))[0];
+    const bestFromGrave = (G, pi, filt) => G.players[pi].grave.filter(x => !(graveMahouLocked(G) && cardOf(x).type === 'マホウ')).filter(filt || (() => true)).sort((a, b) => cardUsefulness(G, pi, b) - cardUsefulness(G, pi, a))[0];
 
     /* ---------- カードごとの処理（書式だけでは決められない「どれを選ぶか」「いつ使うか」があるもの） ----------
        want(G, pi): 使う価値があれば対象（ctx.target）を返す。timing: 'main'（メイン）| 'preAttack'（アタック宣言の直前）
@@ -1760,7 +1852,7 @@
       const yochi = hs.filter(x => YOCHI_RE.test(normTxt(cardOf(x).rule_text)));
       return hs.filter(x => !(yochi.length && x === yochi[0]));
     }
-    const limboPicks = (G, pi, me) => G.players[pi].grave.filter(x => x !== me).sort((a, b) => limboValue(G, pi, b) - limboValue(G, pi, a)).slice(0, 4);
+    const limboPicks = (G, pi, me) => G.players[pi].grave.filter(x => x !== me && !(graveMahouLocked(G) && cardOf(x).type === 'マホウ')).sort((a, b) => limboValue(G, pi, b) - limboValue(G, pi, a)).slice(0, 4);
     // ドッペルゲンガーの対象：相手の手札・戦場・墓地で同じ名前を持つ、マリョクでないカード（手札と戦場のもの）
     function doppelTargets(G, pi) {
       const Q = G.players[1 - pi], cnt = {};
@@ -1949,6 +2041,7 @@
           const P = G.players[pi], n = manaInfo(P).colors.size;
           const mill = c => /相手の山札の上から\d枚を墓地に置/.test(normTxt(cardOf(c).rule_text)) ? 2 : 0;
           const loop = c => (rikyuDeck(G, pi) && rikyuOn(G, pi) ? Math.max(0, 10 - RIKYU_LOOP.indexOf(cardOf(c).name)) * (RIKYU_LOOP.includes(cardOf(c).name) ? 1 : 0) : 0);   // 利休ループで使うマホウを優先
+          if (graveMahouLocked(G)) { log(G, '　二重螺旋階段の効果で、墓地のマホウは墓地を離れません'); return; }
           let ms = P.grave.filter(x => cardOf(x).type === 'マホウ').sort((a, b) => (loop(b) + mill(b) + (CARD_AI[cardOf(b).name] ? 1 : 0)) - (loop(a) + mill(a) + (CARD_AI[cardOf(a).name] ? 1 : 0)));
           if (rikyuDeck(G, pi) && rikyuOn(G, pi)) {   // 利休ループ：ドシャカジ・グラトニーは手札に1枚あればよい。残りは魔力レベルを上げるΩ・チャージに回す
             const pick = [], seen = {};
@@ -2862,7 +2955,7 @@
       'アルキメデス': {   // 戦場に置かれたとき：墓地の『魔導』マホウすべてを手札に戻す
         resolve(G, pi, ctx) {
           if (ctx.kind !== 'field') return false;
-          const P = G.players[pi], t = P.grave.filter(g => cardOf(g).type === 'マホウ' && /魔導 - /.test(cardOf(g).rule_text || ''));
+          const P = G.players[pi], t = graveMahouLocked(G) ? [] : P.grave.filter(g => cardOf(g).type === 'マホウ' && /魔導 - /.test(cardOf(g).rule_text || ''));
           t.forEach(x => { P.grave.splice(P.grave.indexOf(x), 1); x.faceUp = true; P.hand.push(x); });
           log(G, `　アルキメデス：墓地の『魔導』マホウ${t.length}枚を手札に戻しました`); if (t.length) graveLeft(G, pi);
         }
