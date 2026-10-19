@@ -460,7 +460,8 @@
     }
 
     /* aiPlayers: CPUが操作するプレイヤー番号の配列（通常は [1]） */
-    function newGame(deckDef0, deckDef1, firstIdx, aiPlayers) {
+    /* opts.mulligan: 手札の引き直し（1回だけ。手札6枚をすべて山札に戻してシャッフルし、6枚引き直す。ガーディアンはそのまま） */
+    function newGame(deckDef0, deckDef1, firstIdx, aiPlayers, opts) {
       const G = {
         players: [newPlayer(deckDef0), newPlayer(deckDef1)],
         names: ['あなた', 'CPU'],
@@ -470,8 +471,33 @@
         aiPlayers: new Set(aiPlayers || [1]), cpuStage: null, fx: [], triggers: []
       };
       log(G, `対戦開始（${nm(G, firstIdx)}の先攻）。手札6枚・ガーディアン4枚を準備しました`);
+      if (opts && opts.mulligan) {
+        G.mulligan = {};
+        [0, 1].forEach(pi => {
+          if (!G.aiPlayers.has(pi)) { G.mulligan[pi] = 'pending'; return; }
+          G.mulligan[pi] = 'pending';
+          mulligan(G, pi, cpuWantsMulligan(G, pi));
+        });
+      }
       beginTurn(G);
       return G;
+    }
+    // CPUの引き直し：マリョクがない、または序盤に出せるカード（レベル3以下のイジン・ハイケイ）がないとき
+    function cpuWantsMulligan(G, pi) {
+      const H = G.players[pi].hand.map(cardOf);
+      return !H.some(c => c.type === 'マリョク') || !H.some(c => (c.type === 'イジン' || c.type === 'ハイケイ') && (c.level || 0) <= 3);
+    }
+    function mulligan(G, pi, redo) {
+      if (!G.mulligan || G.mulligan[pi] !== 'pending') return fail('手札の引き直しはできません');
+      const P = G.players[pi];
+      G.mulligan[pi] = redo ? 'done' : 'kept';
+      if (!redo) { log(G, `${nm(G, pi)}：手札をそのまま使います`); return { ok: true }; }
+      const n = P.hand.length;
+      P.hand.splice(0).forEach(x => P.deck.push(x.cardId));
+      shuffle(P.deck);
+      for (let i = 0; i < n && P.deck.length; i++) P.hand.push(mkInst(P.deck.pop()));
+      log(G, `${nm(G, pi)}：手札を引き直しました（${n}枚を山札に戻してシャッフルし、${n}枚引き直し）`);
+      return { ok: true };
     }
 
     /* ---------- ターン進行（スタート→ドロー→メイン を自動で行う） ---------- */
@@ -3834,7 +3860,7 @@
       playProblems, summonInfo, manaInfo, parseCard, kwOf, powerOf, attackPowerOf, blockPowerOf, canAct,
       manualMove, manualTap, manualFlip, manualDraw, manualMill, manualRights, manualGuardianFromDeck, manualDestroy, manualPower,
       arenaOn, triggerInfo, resolveAnna, resolvePending,
-      effectPlan, cpuChooseAttack, equipCandidates
+      effectPlan, cpuChooseAttack, equipCandidates, mulligan
     };
     // 画面からの操作のあとにも「能力すべてを失う」常在能力を付け直す
     Object.keys(API).forEach(k => { const f = API[k]; if (typeof f !== 'function' || k === 'newGame') return; API[k] = function (G) { const r = f.apply(null, arguments); if (G && G.players) syncSilence(G); return r; }; });

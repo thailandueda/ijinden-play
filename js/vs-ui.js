@@ -118,18 +118,39 @@
     const sel = document.querySelector('#vsFirst .chip-toggle.is-active').dataset.val;
     startMatch(my, cpu, sel);
   });
+  // オプション：手札の引き直し（ON/OFF はブラウザに保存）
+  const MULL_KEY = 'ijinden-vs-mulligan';
+  const mullOn = () => { try { return localStorage.getItem(MULL_KEY) === '1'; } catch (e) { return false; } };
+  document.querySelectorAll('#vsMulligan .chip-toggle').forEach(b => {
+    if ((b.dataset.val === 'on') === mullOn()) b.classList.add('is-active'); else b.classList.remove('is-active');
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#vsMulligan .chip-toggle').forEach(x => x.classList.remove('is-active'));
+      b.classList.add('is-active');
+      try { localStorage.setItem(MULL_KEY, b.dataset.val === 'on' ? '1' : '0'); } catch (e) { /* 保存できない環境 */ }
+    });
+  });
   /* 対戦を始める（再戦でも使う）。sel: 'first' | 'second' | 'random' */
   function startMatch(my, cpu, sel) {
     const first = sel === 'first' ? 0 : sel === 'second' ? 1 : (Math.random() < 0.5 ? 0 : 1);
     closeMenu();
     VS.deckKeys = { my, cpu, sel };
-    VS.G = ENG.newGame(getDeckByKey(my).cards, getDeckByKey(cpu).cards, first, [1]);
+    VS.G = ENG.newGame(getDeckByKey(my).cards, getDeckByKey(cpu).cards, first, [1], { mulligan: mullOn() });
     VS.mode = 'normal'; VS.selAtk = new Set(); VS.selBlocker = null; VS.assign = {}; VS.busy = false; VS.flashMsg = ''; VS.legacy = []; VS.annaSel = new Set(); VS.trig = null; VS.afterAnna = null; VS.assist = []; VS.assistTurn = 0; fxCursor = 0;
     $('vsSetupPanel').style.display = 'none';
     $('vsBoard').style.display = 'block';
     schedule(2200, () => showToast('ダイブトゥイジンデン！', { variant: 'dive', ms: 2200 }));
+    if (VS.G.mulligan && VS.G.mulligan[0] === 'pending') VS.mode = 'mulligan';   // 引き直すかを先に決める
     render();
-    if (VS.G.current === 1) runCpu();
+    if (VS.G.current === 1 && VS.mode !== 'mulligan') runCpu();
+  }
+  function decideMulligan(redo) {
+    const G = VS.G;
+    const r = ENG.mulligan(G, 0, redo);
+    if (!r.ok) { flash(r.msg); return; }
+    showToast(redo ? '手札を引き直しました' : 'この手札で始めます', { variant: 'long', ms: 1400 });
+    VS.mode = 'normal';
+    render();
+    if (G.current === 1) runCpu();
   }
   // 再戦：同じデッキ・同じ先攻／後攻の設定でもう一度（ランダムならもう一度抽選）
   function rematch() {
@@ -373,6 +394,9 @@
     } else if (VS.mode === 'attack') {
       btn(`アタック確定（${VS.selAtk.size}体）`, 'btn-primary', confirmAttack, VS.selAtk.size === 0);
       btn('キャンセル', 'btn-ghost', () => { VS.mode = 'normal'; VS.selAtk = new Set(); render(); });
+    } else if (VS.mode === 'mulligan') {
+      btn('この手札で始める', 'btn-primary', () => decideMulligan(false));
+      btn('手札を引き直す（1回だけ）', 'btn-ghost', () => decideMulligan(true));
     } else if (VS.mode === 'legacy') {
       btn('遺業フェーズを終える', 'btn-primary', () => {
         if (VS.legacy.length && !confirm(`未処理の遺業能力が${VS.legacy.length}件あります。処理済みとして終了しますか？`)) return;
@@ -553,6 +577,9 @@
       b.classList.add(G.winner === 0 ? 'is-win' : 'is-lose');
       lines.push(G.winner === 0 ? '🎉 あなたの勝利！' : 'CPUの勝利…');
       lines.push(G.winReason);
+    } else if (VS.mode === 'mulligan') {
+      lines.push('🃏 手札の引き直し：今の手札6枚で始めるか、1回だけ引き直すかを選んでください（引き直すと手札6枚を山札に戻してシャッフルし、6枚引きます。ガーディアンはそのまま）。');
+      if (G.mulligan && G.mulligan[1] === 'done') lines.push('CPUは手札を引き直しました。');
     } else if (VS.mode === 'legacy') {
       lines.push('🕯 遺業フェーズ：能力を処理して「処理済み」を押してください。');
     } else if (VS.mode === 'anna' && VS.trig) {
@@ -764,6 +791,7 @@
   function onCardClick(inst, pi, zone, anchor) {
     const G = VS.G;
     if (VS.busy) return;
+    if (VS.mode === 'mulligan') { if (inst.faceUp || (pi === 0 && zone === 'hand')) openCardDetail(inst.cardId); return; }   // 引き直しを決めるまでは見るだけ
     if (VS.mode === 'anna') {
       if (zone === 'field' && ((inst.faceUp && CARDS_BY_ID[inst.cardId].type === 'イジン') || (!inst.faceUp && ENG.arenaOn(G, pi)))) {
         const key = pi + ':' + inst.uid, info = ENG.triggerInfo(G, VS.trig);
