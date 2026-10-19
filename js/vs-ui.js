@@ -116,9 +116,13 @@
     const total = d => Object.values(d.cards).reduce((a, b) => a + b, 0);
     if (total(getDeckByKey(my)) < 10 || total(getDeckByKey(cpu)) < 10) { alert('手札6枚＋ガーディアン4枚を用意するため、10枚以上のデッキが必要です'); return; }
     const sel = document.querySelector('#vsFirst .chip-toggle.is-active').dataset.val;
+    startMatch(my, cpu, sel);
+  });
+  /* 対戦を始める（再戦でも使う）。sel: 'first' | 'second' | 'random' */
+  function startMatch(my, cpu, sel) {
     const first = sel === 'first' ? 0 : sel === 'second' ? 1 : (Math.random() < 0.5 ? 0 : 1);
-
-    VS.deckKeys = { my, cpu };
+    closeMenu();
+    VS.deckKeys = { my, cpu, sel };
     VS.G = ENG.newGame(getDeckByKey(my).cards, getDeckByKey(cpu).cards, first, [1]);
     VS.mode = 'normal'; VS.selAtk = new Set(); VS.selBlocker = null; VS.assign = {}; VS.busy = false; VS.flashMsg = ''; VS.legacy = []; VS.annaSel = new Set(); VS.trig = null; VS.afterAnna = null; VS.assist = []; VS.assistTurn = 0; fxCursor = 0;
     $('vsSetupPanel').style.display = 'none';
@@ -126,7 +130,14 @@
     schedule(2200, () => showToast('ダイブトゥイジンデン！', { variant: 'dive', ms: 2200 }));
     render();
     if (VS.G.current === 1) runCpu();
-  });
+  }
+  // 再戦：同じデッキ・同じ先攻／後攻の設定でもう一度（ランダムならもう一度抽選）
+  function rematch() {
+    const k = VS.deckKeys;
+    if (!k || !getDeckByKey(k.my) || !getDeckByKey(k.cpu)) { endGame(); return; }
+    if (VS.G && VS.G.winner === null && !confirm('対戦中です。この対戦をやめて、同じデッキで最初からやり直しますか？')) return;
+    startMatch(k.my, k.cpu, k.sel || 'random');
+  }
 
   /* ---------- CPU同士で100戦（デッキ評価）。画面が固まらないよう、少しずつ進める ---------- */
   $('vsSim').addEventListener('click', () => {
@@ -357,7 +368,8 @@
     };
     const myTurn = G.winner === null && G.current === 0 && !VS.busy;
     if (G.winner !== null) {
-      btn('準備画面へ戻る', 'btn-primary', endGame);
+      btn('再戦（同じデッキ）', 'btn-primary', rematch);
+      btn('準備画面へ戻る', 'btn-ghost', endGame);
     } else if (VS.mode === 'attack') {
       btn(`アタック確定（${VS.selAtk.size}体）`, 'btn-primary', confirmAttack, VS.selAtk.size === 0);
       btn('キャンセル', 'btn-ghost', () => { VS.mode = 'normal'; VS.selAtk = new Set(); render(); });
