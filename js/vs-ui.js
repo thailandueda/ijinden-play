@@ -499,7 +499,21 @@
       const n = num(m[1]);
       acts.push({ label: `山札の上から${n}枚をガーディアンにして戦場に置く`, fn: () => { let r; for (let i = 0; i < n; i++) r = ENG.manualGuardianFromDeck(G, 0); if (ok(r, `ガーディアン追加×${n}`)) { render(); } } });
     }
-    if ((m = text.match(/([0-9１-４一-三])ドロー|ドローする/))) {
+    // 「自分の戦場のハイケイ1つにつき1ドローする」（行基など）：押したときの枚数を数えてドローする
+    const per = text.match(/(自分の|相手の)?(戦場|魔力ゾーン|墓地)の(ハイケイ|イジン|ガーディアン|カード|マリョク)1(?:つ|体)につき([0-9１-４一-三])ドロー/);
+    if (per) {
+      const [, who, zone, what, k] = per;
+      const countNow = () => {
+        const Q = G.players[who === '相手の' ? 1 : 0], arr = { '戦場': Q.field, '魔力ゾーン': Q.mana, '墓地': Q.grave }[zone];
+        return arr.filter(x => what === 'カード' ? true : what === 'ガーディアン' ? !x.faceUp : x.faceUp && CARDS_BY_ID[x.cardId].type === what).length;
+      };
+      const unit = { 'ハイケイ': 'つ', 'マリョク': 'つ', 'カード': 'つ' }[what] || '体';
+      acts.push({ label: `${zone}の${what}${countNow()}${unit}×${num(k)}＝${countNow() * num(k)}ドローする`, fn: () => {
+        const n = countNow() * num(k);
+        if (!n) { flash(`${zone}に${what}がないのでドローしません`); return; }
+        if (ok(ENG.manualDraw(G, 0, n), `${what}${countNow()}${unit}につき${n}ドロー`)) render();
+      } });
+    } else if ((m = text.match(/([0-9１-４一-三])ドロー|ドローする/))) {
       const n = num(m[1]);
       acts.push({ label: `${n}ドローする`, fn: () => { if (ok(ENG.manualDraw(G, 0, n), `${n}ドロー`)) render(); } });
     }

@@ -3311,7 +3311,7 @@
         ok: (G, pi) => G.players[pi].manaPlace < 1 && G.players[pi].hand.length >= 3 },
       { re: /^([1-3])ドローして、イジン召喚権\+([1-3])する$/, run: (G, pi, m) => { manualDraw(G, pi, Number(m[1]), '効果'); G.players[pi].summon += Number(m[2]); log(G, `　効果：${nm(G, pi)}のイジン召喚権+${m[2]}`); } },
       { re: /^([1-3])ドローして、自分の手札([1-3])枚を墓地に置く$/, run: (G, pi, m) => { manualDraw(G, pi, Number(m[1]), '効果'); discardLowest(G, pi, Number(m[2])); } },
-      { re: /^自分はイジン召喚権\+([1-3])して、自分の戦場のハイケイ1つにつき1ドローする$/, run: (G, pi, m) => {
+      { re: /^(?:自分は)?イジン召喚権\+([1-3])して、自分の戦場のハイケイ1つにつき1ドローする$/, run: (G, pi, m) => {
         G.players[pi].summon += Number(m[1]); log(G, `　効果：${nm(G, pi)}のイジン召喚権+${m[1]}`);
         const n = G.players[pi].field.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').length; if (n) manualDraw(G, pi, n, '効果'); } },
       // 山札・墓地・手札
