@@ -326,3 +326,8 @@ main{ padding:18px; max-width:1500px; margin:0 auto; }
 .haikei-row .haikei-cards{ min-height:44px; flex:1; }
 .haikei-row.is-empty{ opacity:.45; }
 .haikei-row.is-empty .haikei-cards{ min-height:28px; }
+
+/* 新しく引いたカード（手札） */
+.mini-card.is-drawn{ border-color:#4fb3ff; box-shadow:0 0 0 1px rgba(79,179,255,.6), 0 0 10px rgba(79,179,255,.55); animation: drawnPulse 1.6s ease-in-out 2; }
+.mini-card-drawn{ position:absolute; top:-8px; right:-4px; font-size:9px; font-weight:800; color:#fff; background:#2f8fe0; padding:1px 5px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.4); pointer-events:none; }
+@keyframes drawnPulse{ 0%,100%{ box-shadow:0 0 0 1px rgba(79,179,255,.6), 0 0 6px rgba(79,179,255,.4); } 50%{ box-shadow:0 0 0 2px rgba(79,179,255,.9), 0 0 16px rgba(79,179,255,.8); } }

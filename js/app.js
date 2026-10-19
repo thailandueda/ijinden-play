@@ -989,17 +989,17 @@ function placePopup(menuEl, anchorEl) {
 }
 
 function drawCards(n) {
-  let drawn = 0;
+  let drawn = 0; const names = [];
   for (let i = 0; i < n; i++) {
     if (GAME.deck.length === 0) { log('山札が0枚のためこれ以上ドローできません'); break; }
     const id = GAME.deck.pop();
-    GAME.hand.push({ uid: uidCounter++, cardId: id });
-    drawn++;
+    GAME.hand.push({ uid: uidCounter++, cardId: id, drawnTurn: GAME.turn });   // 新しく引いたカードの目印（このターンの間）
+    drawn++; names.push(CARDS_BY_ID[id].name);
   }
   GAME.resources.drawn += drawn;	//ドロー制限
   if (drawn > 0) {
     log(`${drawn}枚ドローしました（山札残り${GAME.deck.length}枚）`);
-    showToast('ドロー！' + (drawn > 1 ? ` ×${drawn}` : ''));
+    showToast('ドロー！' + (drawn > 1 ? ` ×${drawn}` : ''), { sub: '引いたカード：' + names.join('、') });
   }
 }
 /*
@@ -1496,6 +1496,10 @@ function createMiniCard(inst, zoneKey) {
 	}
 
   if (zoneKey === 'field' && inst.tapped) el.classList.add('is-tapped');
+  if (zoneKey === 'hand' && inst.drawnTurn === GAME.turn) {   // このターンに引いたカード
+    el.classList.add('is-drawn');
+    const b = document.createElement('span'); b.className = 'mini-card-drawn'; b.textContent = '引いた'; el.appendChild(b);
+  }
   if (zoneKey === 'field' && inst.isGuardian && faceUp) {
     const tag = document.createElement('span'); tag.className = 'mini-card-tag'; tag.textContent = 'G';
     el.appendChild(tag);

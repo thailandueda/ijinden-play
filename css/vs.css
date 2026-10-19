@@ -209,3 +209,4 @@
 .equip-slip + .equip-slip{ margin-top:-1px; width:90px; }
 .equip-stack > .mini-card{ position:relative; z-index:1; }
 .equip-slip:hover{ filter:brightness(1.08); }
+

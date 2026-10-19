@@ -298,7 +298,8 @@
       if (f.type === 'draw') {
         const mine = f.pi === 0;
         const text = (f.turn ? (mine ? '俺のターン、ドロー！' : 'CPUのターン、ドロー！') : (mine ? 'ドロー！' : 'CPUドロー')) + (f.n > 1 ? ` ×${f.n}` : '');
-        schedule(1300, () => showToast(text, { variant: mine ? 'me' : 'cpu', ms: 1300 }));
+        const sub = mine && f.names && f.names.length ? '引いたカード：' + f.names.join('、') : undefined;   // 自分が引いたカード名
+        schedule(sub ? 1700 : 1300, () => showToast(text, { variant: mine ? 'me' : 'cpu', sub, ms: sub ? 1700 : 1300 }));
       } else if (f.type === 'attack') {
         const text = `バトル！${f.pi === 0 ? '' : 'CPUの'}${f.names.join('・')}で攻撃！`;
         schedule(1800, () => showToast(text, { variant: 'long', ms: 1800 }));
@@ -748,6 +749,8 @@
       }
     }
     if (zone === 'field' && inst.faceUp && card.type === 'イジン' && inst.placedTurn === G.turn) { e.classList.add('has-new'); e.appendChild(el('span', 'mini-card-new', 'New')); }
+    // 新しく引いたカード（自分のターンを終えるまで表示）
+    if (zone === 'hand' && pi === 0 && inst.drawnSeq && inst.drawnSeq > (G.players[0].seenSeq || 0)) { e.classList.add('is-drawn'); e.appendChild(el('span', 'mini-card-drawn', '引いた')); }
 
     // バトル表示・選択状態
     const tag = (text, extra) => { const t = el('span', 'mini-card-tag ' + (extra || ''), text); e.appendChild(t); };

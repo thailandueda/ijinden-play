@@ -451,6 +451,8 @@
     const hasLegacy = c => !!c.legacy_ability && !['-', '（空欄）', ''].includes(String(c.legacy_ability).trim());
 
     /* ---------- 準備 ---------- */
+    // ドローしたカード（新しく引いたカードの目印：drawnSeq。自分のターンを終えるまで「引いた」表示）
+    function drawnInst(G, cardId) { G.drawSeq = (G.drawSeq || 0) + 1; return mkInst(cardId, { drawnSeq: G.drawSeq }); }
     function mkInst(cardId, extra) {
       return Object.assign({ uid: uidSeq++, cardId, faceUp: true, tapped: false, isGuardian: false, placedTurn: 0 }, extra || {});
     }
@@ -525,7 +527,7 @@
       P.field.forEach(c => { if (!(c.frozenUntil >= G.turn)) c.tapped = false; });   // ピーコック（青魔導）で起きないカードは寝たまま
       // 劉備「自分の戦場の緑のイジンが起きたとき、1ドローする」（CPU）
       if (wokeGreen && !pillarOn(G) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) P.field.filter(x => x.faceUp && !x.silenced && /自分の戦場の緑のイジンが起きたとき、1ドローする/.test(cardOf(x).rule_text || '')).forEach(x => {
-        for (let k = 0; k < wokeGreen && P.deck.length; k++) P.hand.push(mkInst(P.deck.pop()));
+        for (let k = 0; k < wokeGreen && P.deck.length; k++) P.hand.push(drawnInst(G, P.deck.pop()));
         log(G, `　${cardOf(x).name}の効果：緑のイジンが起きたので${wokeGreen}ドロー`);
       });
       // 「自分のスタートフェイズが終了したとき、マリョク配置権+1する」（巨大古墳）
@@ -543,8 +545,8 @@
       } else if (!P.deck.length) {
         log(G, `${nm(G, pi)}の山札がないためドローできません`);
       } else {
-        P.hand.push(mkInst(P.deck.pop()));
-        G.fx.push({ type: 'draw', pi, n: 1, turn: true });
+        const x = drawnInst(G, P.deck.pop()); P.hand.push(x);
+        G.fx.push({ type: 'draw', pi, n: 1, turn: true, names: [cardOf(x).name] });
         log(G, `${nm(G, pi)}は1枚ドロー（山札残り${P.deck.length}枚）`);
         deckZero(G, pi);
       }
@@ -644,7 +646,7 @@
       if (pi !== undefined && G.current !== pi) return fail('あなたのターンではありません');
       if (!canAct(G, G.current)) return fail('今はターンを終了できません');
       const P = G.players[G.current];
-      if (skipEnd) { log(G, `${nm(G, G.current)}：ターン終了（エンドフェイズは行いません）`); P.manaPlace = 0; P.summon = 0; G.phase = 'end'; G.current = 1 - G.current; G.turn += 1; beginTurn(G); return { ok: true }; }
+      if (skipEnd) { log(G, `${nm(G, G.current)}：ターン終了（エンドフェイズは行いません）`); P.manaPlace = 0; P.summon = 0; P.seenSeq = G.drawSeq || 0; G.phase = 'end'; G.current = 1 - G.current; G.turn += 1; beginTurn(G); return { ok: true }; }
       log(G, `${nm(G, G.current)}：エンドフェイズ（未使用の配置権・召喚権は消滅）`);
       cpuPhaseTriggers(G, G.current, 'endPhase');
       cpuPhaseTriggers(G, 1 - G.current, 'oppEnd');
@@ -660,6 +662,7 @@
         manualDestroy(G, G.current, x.uid);
       });
       P.manaPlace = 0; P.summon = 0;
+      P.seenSeq = G.drawSeq || 0;   // ターンを終えたら、それまでに引いたカードは「引いた」表示を外す
       G.phase = 'end';
       G.current = 1 - G.current;
       G.turn += 1;
@@ -1254,9 +1257,9 @@
       if (by && G.aiPlayers.has(pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi)) && fieldSrc(G, pi, /自分が能力によってカードを引く際、カードを引く代わりに同じ数だけマリョク配置権を増やしてもよい/) && wantRightsInsteadOfDraw(G, pi)) {
         P.manaPlace += n; log(G, `　${by}：米百俵の効果で、${n}ドローの代わりにマリョク配置権+${n}`); return { ok: true };
       }
-      let k = 0;
-      for (let i = 0; i < n && P.deck.length; i++) { P.hand.push(mkInst(P.deck.pop())); k++; }
-      if (k > 0) G.fx.push({ type: 'draw', pi, n: k });
+      let k = 0; const got = [];
+      for (let i = 0; i < n && P.deck.length; i++) { const x = drawnInst(G, P.deck.pop()); P.hand.push(x); got.push(cardOf(x).name); k++; }
+      if (k > 0) G.fx.push({ type: 'draw', pi, n: k, names: got });
       log(G, `${by ? '　' + by + '：' : '【手動】'}${nm(G, pi)}が${k}枚ドロー（山札残り${P.deck.length}枚）`);
       if (k > 0) deckZero(G, pi);
       return { ok: true };
