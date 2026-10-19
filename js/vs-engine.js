@@ -578,6 +578,8 @@
     function conditionProblems(P, card, red, G) {
       const { cap, colors } = manaInfo(P);
       const hl = card.type === 'ハイケイ' ? haikeiLevel(P, card, G) : null;
+      // アイオン「これのマホウ使用に際し、これのレベルは、自分の手札の他のカード1つにつき1だけ下がる」
+      if (card.type === 'マホウ' && /これのマホウ使用に際し、これのレベルは、自分の手札の他のカード1つにつき1だけ下がる/.test(normTxt(card.rule_text))) red = (red || 0) + Math.max(0, (P.hand || []).length - 1);
       const lv = hl !== null ? Math.min(hl, card.level) : SR.effectiveLevel(card.level, red);
       const p = [];
       if (lv > cap) p.push(red ? `レベル条件（Lv${card.level}→軽減後${lv} > 上限${cap}）` : `レベル条件（Lv${card.level} > 上限${cap}）`);
@@ -966,7 +968,8 @@
           if (G.battle && G.battle.attackers.includes(inst.uid)) G.atkDestroyedTurn = G.turn;
           if (wasUp && onDestroyed(G, pi, inst) === 'saved') return;   // アリエノール・ダキテーヌ：破壊されていない状態に
           items.push({ name: c.name, cardId: c.id });
-          if (hasLegacy(c)) legacyFx.push({ type: 'legacy', pi, uid: inst.uid, name: c.name, cardId: c.id, text: String(c.legacy_ability).trim() });
+          detachedPalace(G, pi, c);
+          if (hasLegacy(c) && !legacyBlocked(G, c)) legacyFx.push({ type: 'legacy', pi, uid: inst.uid, name: c.name, cardId: c.id, text: String(c.legacy_ability).trim() });
         });
         return items;
       };
@@ -1072,7 +1075,8 @@
       if (wasUp && c.type === 'ハイケイ' && !pillarOn(G)) G.players.forEach((Q, q) => { if (!G.aiPlayers.has(q) || (G.cpuNoEffects && G.cpuNoEffects.has(q))) return;
         Q.field.filter(x => x.faceUp && !x.silenced && /ハイケイが破壊されるたび、1ドローする/.test(cardOf(x).rule_text || '')).forEach(x => { if (Q.deck.length > deckReserve(G, q)) manualDraw(G, q, 1, `${cardOf(x).name}（ハイケイが破壊された）`); }); });
       G.fx.push({ type: 'destroy', pi, manual: true, items: [{ name: c.name, cardId: c.id }] });
-      if (hasLegacy(c) && !(G.aiPlayers.has(pi) && cpuLegacy(G, pi, inst.uid))) G.fx.push({ type: 'legacy', pi, uid: inst.uid, name: c.name, cardId: c.id, text: String(c.legacy_ability).trim() });
+      detachedPalace(G, pi, c);
+      if (hasLegacy(c) && !legacyBlocked(G, c) && !(G.aiPlayers.has(pi) && cpuLegacy(G, pi, inst.uid))) G.fx.push({ type: 'legacy', pi, uid: inst.uid, name: c.name, cardId: c.id, text: String(c.legacy_ability).trim() });
       return { ok: true };
     }
     function manualTap(G, pi, uid) {
@@ -1423,6 +1427,21 @@
           manualDestroy(G, 1 - pi, t.uid, cardOf(t).name);
           G.fx.push({ type: 'ability', pi: 1 - pi, kind: 'attackDecl', cardId: t.cardId, name: cardOf(t).name, text: 'アタッカー1体をアタッカーでない状態に', uid: t.uid, auto: true });
         }
+      }
+      // 遁甲盤「これを表にして、アタッカー1体をアタッカーでない状態にする」・遁甲式木蓮「ガーディアン1体を山札の上に戻して、アタッカーすべてをアタッカーでない状態にする」
+      // 遁甲式烈火「ガーディアン1体を山札の上に戻して、相手の戦場の起きているイジンすべてを破壊する」（魔力ゾーンで裏のとき）
+      if (G.aiPlayers.has(1 - pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(1 - pi)) && G.battle) {
+        const atks = () => G.battle.attackers.map(u => P.field.find(x => x.uid === u)).filter(Boolean);
+        const danger = () => !coverable(G, asAtk(G, atks()), eligibleBlockers(G, 1 - pi));
+        const tj = re => D.mana.find(m => !m.faceUp && re.test(normTxt(cardOf(m).rule_text)));
+        const flip = (m, text) => { m.faceUp = true; log(G, `　${cardOf(m).name}：魔力ゾーンのこれを表にして発動します`); G.fx.push({ type: 'ability', pi: 1 - pi, kind: 'block', cardId: m.cardId, name: cardOf(m).name, text, uid: m.uid, auto: true }); };
+        const mok = tj(/これを表にして発動できる。自分の戦場のガーディアン1体を山札の上に戻して、アタッカーすべてをアタッカーでない状態にする/);
+        if (mok && danger() && takeGuardian(G, 1 - pi)) { const g = takeGuardian(G, 1 - pi); D.field.splice(D.field.indexOf(g), 1); D.deck.push(g.cardId); flip(mok, 'アタッカーすべてをアタッカーでない状態に'); G.battle.attackers = []; log(G, '　アタッカーすべてがアタッカーでなくなりました'); }
+        const ban = G.battle.attackers.length && tj(/これが魔力ゾーンに裏で置かれているなら、これを表にして、アタッカー1体を指定して発動できる。そのアタッカーをアタッカーでない状態にする/);
+        if (ban && danger()) { const a = atks().sort((x, y) => requiredBlockers(y, G) - requiredBlockers(x, G) || attackPowerOf(y, G) - attackPowerOf(x, G))[0]; flip(ban, `${a.faceUp ? cardOf(a).name : 'ガーディアン'}をアタッカーでない状態に`); G.battle.attackers = G.battle.attackers.filter(u => u !== a.uid); }
+        const fire = tj(/これを表にして発動できる。自分の戦場のガーディアン1体を山札の上に戻して、相手の戦場の起きているイジンすべてを破壊する/);
+        const up = P.field.filter(x => isIjinUp(x) && !x.tapped).filter(notIndestructible(G));
+        if (fire && takeGuardian(G, 1 - pi) && up.reduce((t, x) => t + instValue(G, x), 0) >= 6000) { const g = takeGuardian(G, 1 - pi); D.field.splice(D.field.indexOf(g), 1); D.deck.push(g.cardId); flip(fire, '相手の起きているイジンすべてを破壊'); up.forEach(x => manualDestroy(G, pi, x.uid, cardOf(fire).name)); }
       }
       // 遁甲式水鏡「相手のターンのブロックステップが開始したとき、魔力ゾーンのこれを表にして発動できる。自分の戦場のガーディアン1体を山札の上に戻して、戦場の寝ているイジンすべてを手札に戻す」
       if (G.aiPlayers.has(1 - pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(1 - pi)) && G.battle) {
@@ -1899,9 +1918,12 @@
           log(G, '　カルドロン：手札1枚を裏向きで魔力ゾーンに置きました');
         }
       },
-      'フール': {   // 墓地のマホウのレベル合計が1以上なら手札の他のカード1つを墓地へ、そうでなければ1ドロー
+      'フール': {   // 墓地のマホウのレベル合計が1以上なら手札の他のカード1つを墓地へ、そうでなければ1ドロー（マホウ）
+        timing: 'main',
+        want(G, pi) { const P = G.players[pi], lv = P.grave.filter(x => cardOf(x).type === 'マホウ').reduce((t, x) => t + (cardOf(x).level || 0), 0);
+          return lv >= 1 ? (P.hand.some(x => cardOf(x).name !== 'フール' && discardScore(G, pi, x) >= 90) ? {} : null) : (P.deck.length > deckReserve(G, pi) ? {} : null); },
         resolve(G, pi, ctx) {
-          if (ctx.kind !== 'field') return false;
+          if (ctx.kind && ctx.kind !== 'mahou') return false;
           const P = G.players[pi], lv = P.grave.filter(x => cardOf(x).type === 'マホウ').reduce((t, x) => t + (cardOf(x).level || 0), 0);
           if (lv >= 1) discardLowest(G, pi, 1, 'フール'); else manualDraw(G, pi, 1, 'フール');
         }
@@ -1934,7 +1956,10 @@
       },
       '純白の塔': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },        // アタック宣言時に処理（cpuOnAttack）
       '毘盧遮那仏像': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },    // アタック宣言時に処理（cpuOnAttack）。パワー+1000は自動計算
-      '遁甲式水鏡': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },      // 魔力ゾーンで裏向きのときの能力なので、戦場では何もしない
+      '遁甲式水鏡': { resolve(G, pi, ctx) { return ctx.kind === 'field' || ctx.kind === 'mana' ? undefined : false; } },   // 魔力ゾーンに裏で置いておくカード（表で置いても何もしない）
+      '遁甲盤': { resolve(G, pi, ctx) { return ctx.kind === 'mana' ? undefined : false; } },
+      '遁甲式烈火': { resolve(G, pi, ctx) { return ctx.kind === 'mana' ? undefined : false; } },
+      '遁甲式木蓮': { resolve(G, pi, ctx) { return ctx.kind === 'mana' ? undefined : false; } },      // 魔力ゾーンで裏向きのときの能力なので、戦場では何もしない
       'アイスソード': { resolve(G, pi, ctx) { return ctx.kind === 'mana' ? 'declined' : false; } },    // 装備は使わない
       // ===== 第2弾プリセットのカード =====
       '親鸞': {   // エンドフェイズ：墓地のマリョクでないカード1つを山札の下へ → 「カードが墓地から離れたとき」1ドロー（墓地6枚以上は保つ）
@@ -2250,6 +2275,36 @@
           log(G, '　ファイナルアタック：イジンすべてを起こして、追加でバトルします（このターンのエンドフェイズに敗北）');
         }
       },
+      // ===== 種類の修正で追加（森閑たる離宮・マザーグース＝ハイケイ、デュエル・フリート＝マホウ） =====
+      '森閑たる離宮': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : false; } },   // 常在（エンジン）
+      'マザーグース': {   // 執筆：自分の戦場の黄のカード3つにつき1ドローして、これを破壊する
+        resolve(G, pi, ctx) {
+          if (ctx.kind === 'field') return;
+          if (ctx.kind !== 'shippitsu') return false;
+          const P = G.players[pi], n = Math.floor(P.field.filter(x => x.faceUp && String(cardOf(x).color || '').includes('黄')).length / 3);
+          if (n < 1 || P.deck.length <= n + deckReserve(G, pi) || !ctx.inst || !P.field.includes(ctx.inst)) return 'declined';
+          manualDraw(G, pi, n, 'マザーグース'); manualDestroy(G, pi, ctx.inst.uid, 'マザーグース');
+        }
+      },
+      'デュエル': {   // 自分の起きているイジン1体と相手のイジン1体：パワーが高い方を寝かせ、低い方を墓地へ
+        timing: 'main',
+        want(G, pi) {
+          const mine = G.players[pi].field.filter(x => isIjinUp(x) && !x.tapped).sort((a, b) => powerOf(b, G) - powerOf(a, G))[0];
+          if (!mine) return null;
+          const foe = G.players[1 - pi].field.filter(x => isIjinUp(x) && powerOf(x, G) < powerOf(mine, G)).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
+          return foe && instValue(G, foe) >= 3000 ? { mine: mine.uid, foe: foe.uid } : null;
+        },
+        resolve(G, pi, ctx) {
+          const P = G.players[pi], O = G.players[1 - pi], t = ctx.target || {};
+          const a = P.field.find(x => x.uid === t.mine), b = O.field.find(x => x.uid === t.foe);
+          if (!a || !b) return false;
+          const pa = powerOf(a, G), pb = powerOf(b, G);
+          if (pa === pb) { a.tapped = b.tapped = true; log(G, '　デュエル：パワーが同じなので、どちらも寝かせました'); return; }
+          const [hi, hq, lo, lq] = pa > pb ? [a, pi, b, 1 - pi] : [b, 1 - pi, a, pi];
+          hi.tapped = true; log(G, `　デュエル：${cardOf(hi).name}を寝かせて、${cardOf(lo).name}を墓地に置きます`); fieldToGrave(G, lq, lo); void hq;
+        }
+      },
+      'フリート': { timing: 'preAttack', want() { return null; }, resolve() { } },   // バトルの補助：CPUは使わない
       // ===== デッキコンテストのプリセットのカード =====
       '伊能忠敬': {   // 「マリョク配置権+1」か「墓地のハイケイすべてを手札に戻す」
         resolve(G, pi, ctx) {
@@ -2375,7 +2430,7 @@
         want(G, pi) { const hs = surveyPick(G, pi); return hs.reduce((t, x) => t + (cardOf(x).level || 0), 0) >= 5 ? {} : null; },
         resolve(G, pi) {
           const P = G.players[pi], hs = surveyPick(G, pi), lv = hs.reduce((t, x) => t + (cardOf(x).level || 0), 0);
-          if (!hs.length) return false;
+          if (!hs.length) { log(G, '　サーベイング：墓地に置けるハイケイがありません'); return; }
           hs.forEach(x => handToGrave(G, pi, x));
           const n = Math.min(Math.floor(lv / 5), Math.max(0, P.deck.length - deckReserve(G, pi)));
           log(G, `　サーベイング：ハイケイ${hs.length}つ（レベル合計${lv}）を墓地に置きました`); manualDraw(G, pi, n, 'サーベイング');
@@ -2432,7 +2487,9 @@
           handToGrave(G, pi, x); log(G, `　モナ・リザ：手札の${cardOf(x).name}を墓地に置きました`); manualDraw(G, pi, 1, 'モナ・リザ');
         }
       },
-      'アイオン': {   // 手札すべてを山札に戻してシャッフルし、7ドロー（このターン、マホウ使用できない）
+      'アイオン': {   // 手札すべてを山札に戻してシャッフルし、7ドロー（このターン、マホウ使用できない）：最後に使う
+        timing: 'post',
+        want(G, pi) { const P = G.players[pi]; return P.deck.length >= 12 && P.hand.length <= 7 ? {} : null; },
         resolve(G, pi, ctx) {
           if (ctx.kind !== 'field' && ctx.kind !== 'mahou') return false;
           const P = G.players[pi];
@@ -2974,11 +3031,21 @@
     };
 
     /* CPUの遺業能力（戦場から墓地に置かれたとき）。読めるものだけ処理して true を返す */
+    // 森閑たる離宮「これが戦場にある間「冥府発動」でない遺業能力は発動しない」
+    const rikyuuOn = G => G.players.some(Q => Q.field.some(x => x.faceUp && !x.silenced && /これが戦場にある間「冥府発動」でない遺業能力は発動しない/.test(cardOf(x).rule_text || '')));
+    const legacyBlocked = (G, c) => rikyuuOn(G) && !/冥府発動/.test(c.legacy_ability || '');
+    // 森閑たる離宮「カードが戦場から墓地に置かれるたび、そのカードが「冥府発動」を持っていないなら、そのカードのプレイヤーの手札1枚を墓地に置く（そのプレイヤーが選ぶ）」
+    function detachedPalace(G, q, c) {
+      if (!rikyuuOn(G) || /冥府発動/.test(c.legacy_ability || '') || !G.players[q].hand.length) return;
+      if (G.aiPlayers.has(q)) discardLowest(G, q, 1, '森閑たる離宮');
+      else log(G, `　森閑たる離宮：${nm(G, q)}は手札1枚を墓地に置いてください（手動）`);
+    }
     function cpuLegacy(G, pi, uid) {
       if (G.cpuNoEffects && G.cpuNoEffects.has(pi)) return false;
       const P = G.players[pi], inst = P.grave.find(x => x.uid === uid);
       if (!inst) return true;   // すでに墓地を離れている（他の効果で動いた）ので、何もしない
       const c = cardOf(inst), t = normTxt(c.legacy_ability);
+      if (legacyBlocked(G, c)) { log(G, `　森閑たる離宮の効果：${c.name}の遺業能力は発動しません`); return true; }
       // ヴォルフガング・アマデウス・モーツァルト「相手の墓地のカードは能力すべてを失う」
       const moz = G.players[1 - pi].field.find(x => x.faceUp && !x.silenced && /これが戦場にいる間、相手の戦場の「音楽」イジンと、相手の墓地のカードは能力すべてを失う/.test(cardOf(x).rule_text || ''));
       if (moz) { log(G, `　${cardOf(moz).name}の効果：${c.name}の遺業能力は発動しません`); return true; }
@@ -3293,7 +3360,7 @@
       const dup = P.hand.filter(x => cardOf(x).name === c.name).length > 1 ? -2 : 0;
       if (/手札から墓地に置かれたとき、これを戦場に置く/.test(c.rule_text || '')) return -5;   // マシュー・ペリー：墓地に置かれると戦場に出る
       if (c.type === 'イジン') return (c.level <= cap + 2 ? 10 : 4) + (c.power || 0) / 2000 + dup;
-      if (/魔力ゾーンのこれを表にして発動できる/.test(c.rule_text || '')) return 2;   // 遁甲式水鏡：裏で魔力ゾーンに置くカード
+      if (/魔力ゾーンのこれを表にして発動できる|これが魔力ゾーンに裏で置かれているなら、これを表にして/.test(c.rule_text || '')) return 2;   // 遁甲式：裏で魔力ゾーンに置くカード
       if (c.type === 'ハイケイ') return 7 + dup;
       if (c.type === 'マホウ') return (effectPlan(SR.abilityText(c, 'mahou') || '') ? 6 : 1) + dup;
       return 5;
@@ -3309,7 +3376,8 @@
       if (P.manaPlace < 1 || (!P.hand.length && !shibiReady(G, pi))) return false;
       const stoneDraw = P.mana.some(m => m.faceUp && STONE_DRAW_RE.test(normTxt(cardOf(m).rule_text)));
       const okLock = c => !lockMana(c) || (isPillar(c) ? late : (late && oliveGood(G, pi)));
-      const manaCards = P.hand.filter(i => cardOf(i).type === 'マリョク' && okLock(cardOf(i)));
+      const TONKO = /魔力ゾーンのこれを表にして発動できる|これが魔力ゾーンに裏で置かれているなら、これを表にして/;   // 遁甲式：裏で置く
+      const manaCards = P.hand.filter(i => cardOf(i).type === 'マリョク' && okLock(cardOf(i)) && !TONKO.test(cardOf(i).rule_text || ''));
       if (late && !manaCards.length && !(shibiReady(G, pi) && P.grave.some(x => cardOf(x).type === 'マリョク' && okLock(cardOf(x))))) return false;   // 最後は表のマリョクだけ
       // 地上の紫微垣「自分のマリョク配置において、表で置く限り、ターンに1回だけ自分の墓地のマリョクも選べる」（戦場か墓地で効果）
       const gm = P.grave.filter(x => cardOf(x).type === 'マリョク' && okLock(cardOf(x)));
