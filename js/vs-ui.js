@@ -620,6 +620,12 @@
       lines.push(`あなたのターン（メインフェイズ）${G.battleUsed ? '　※バトルは使用済み' : ''}`);
       lines.push('手札のカードをクリックして行動できます。終わったら「ターン終了」。');
     }
+    // 山札切れの注意：自分のターンが始まるときに山札が0枚だと負け（相手も同じ）
+    if (G.winner === null) {
+      const d0 = G.players[0].deck.length, d1 = G.players[1].deck.length;
+      if (d0 <= 3) lines.push(`⚠ あなたの山札は残り${d0}枚です。あなたのターンが始まるときに山札が0枚だと負けになります。`);
+      if (d1 <= 3) lines.push(`★ CPUの山札は残り${d1}枚です。CPUのターンが始まるときに山札が0枚ならあなたの勝ちです。`);
+    }
     if (VS.flashMsg) lines.push('⚠ ' + VS.flashMsg);
     lines.forEach((t, i) => { const p = el('div', i === 0 ? 'vs-banner-main' : 'vs-banner-sub', t); b.appendChild(p); });
     if (G.winner === null && VS.mode === 'block' && G.battle) {

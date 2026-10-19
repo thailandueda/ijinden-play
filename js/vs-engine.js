@@ -512,7 +512,7 @@
       const pi = G.current, P = G.players[pi];
       G.phase = 'start';
       log(G, `──── ターン${G.turn}：${nm(G, pi)}のターン ────`);
-      if (P.deck.length === 0) { win(G, 1 - pi, `${nm(G, pi)}の山札が0枚でターン開始`); return; }
+      if (P.deck.length === 0) { win(G, 1 - pi, `${nm(G, pi)}のターンが始まるときに、${nm(G, pi)}の山札が0枚`); return; }   // ルール：相手のターンが始まるときに相手の山札が0枚なら勝利
       P.manaPlace = 1; P.summon = 1;
       // 消耗（自分のスタートフェイズで裏にする）：ピラー・オリーブの枝
       P.mana.filter(m => m.faceUp && /消耗（自分のスタートフェイズで裏にする）/.test(cardOf(m).rule_text || '')).forEach(m => { m.faceUp = false; log(G, `　${cardOf(m).name}は消耗で裏になりました`); });
