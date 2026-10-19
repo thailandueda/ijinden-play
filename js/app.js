@@ -1308,7 +1308,7 @@ function manaSummaryText() {
 }
 
 /* マリョクゾーンの表示：色ごとのレベル内訳＋合計のレベル上限（ソロプレイと対戦で共通） */
-function buildManaSummary(box, manaList) {
+function buildManaSummary(box, manaList, eng) {   // eng: CPU対戦エンジンの計算結果 { cap, colors }（装備・カルドロンなどの効果込み）
   const ORDER = '赤青緑黄紫無';
   const groups = {};          // カードの色（例:「赤」「赤青」）ごとの表向きレベル合計
   let faceDown = 0, total = 0;
@@ -1340,7 +1340,15 @@ function buildManaSummary(box, manaList) {
     chip.innerHTML = `<b>裏</b><span>×${faceDown}</span>`;
     chips.appendChild(chip);
   }
-  if (!keys.length && !faceDown) {
+  const bonus = eng ? eng.cap - (total + faceDown) : 0;   // 万葉集（装備）など、効果による増減
+  if (bonus) {
+    const chip = document.createElement('span');
+    chip.className = 'mana-chip mana-chip-down';
+    chip.innerHTML = `<b>効果</b><span>${bonus > 0 ? '+' : ''}${bonus}</span>`;
+    chips.appendChild(chip);
+  }
+  if (eng) eng.colors.forEach(ch => { if (COLOR_HEX[ch]) usable.add(ch); });
+  if (!keys.length && !faceDown && !bonus) {
     const none = document.createElement('span');
     none.className = 'mana-none';
     none.textContent = 'マリョクなし';
@@ -1348,7 +1356,7 @@ function buildManaSummary(box, manaList) {
   }
   const cap = document.createElement('div');
   cap.className = 'mana-cap';
-  cap.innerHTML = `<span class="mana-cap-label">レベル上限</span><span class="mana-cap-num">${total + faceDown}</span>`;
+  cap.innerHTML = `<span class="mana-cap-label">レベル上限</span><span class="mana-cap-num">${total + faceDown + bonus}</span>`;
   const colorsLine = document.createElement('div');
   colorsLine.className = 'mana-usable';
   colorsLine.innerHTML = '使える色：' + (usable.size

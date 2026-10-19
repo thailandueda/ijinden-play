@@ -62,7 +62,33 @@
       return info;
     }
     const NEUTRAL_KW = Object.freeze({ haste: false, watcher: false, mortal: false, pressure: 1, power: 0, attack: 0, block: 0 });
-    const kwOf = inst => (inst.faceUp && !inst.silenced ? parseCard(cardOf(inst)) : NEUTRAL_KW);   // 裏向き・能力禁止中は能力を持たない   // 裏向き（ガーディアン）は能力を持たない
+    /* ---------- 装備：装備しているイジンは「装備：」の文を得る（装備されたカードは、それ以外の特性をすべて失う） ---------- */
+    const equipBody = c => { const m = String(c.rule_text || '').match(/(?:^|\n)\s*装備\s*(?:（[^）]*）)?\s*[:：]\s*([\s\S]*)$/); return m ? m[1].trim() : ''; };
+    const equipCache = {};
+    function equipInfo(c) {   // 装備の文から、キーワード・色・パワー・魔力レベルを読む
+      if (equipCache[c.id]) return equipCache[c.id];
+      const body = normTxt(equipBody(c)), out = { kw: { haste: false, watcher: false, mortal: false, pressure: 1, power: 0, attack: 0, block: 0 }, colors: [], perColor: 0, cap: 0 };
+      body.replace(/（[^）]*）/g, ' ').split(/[\s　]+/).filter(Boolean).every(t => {
+        if (!KW_RE.test(t)) return false;
+        if (t === '即応') out.kw.haste = true; else if (t === 'ウォッチャー') out.kw.watcher = true; else if (t === 'モータル') out.kw.mortal = true;
+        else if (PRESSURE[t]) out.kw.pressure = Math.max(out.kw.pressure, PRESSURE[t]);
+        else { const m = t.match(/^(パワー|アタック|ブロック)\+(\d+)$/); if (m) out.kw[{ 'パワー': 'power', 'アタック': 'attack', 'ブロック': 'block' }[m[1]]] += Number(m[2]); }
+        return true;
+      });
+      const cm = body.match(/「色\s*[:：]\s*([^」]+)」/); if (cm) out.colors = [...cm[1]].filter(ch => COLOR_CHARS.includes(ch));
+      const pc = body.match(/これの色1つにつき「パワー\+(\d+)」を得る/); if (pc) out.perColor = Number(pc[1]);
+      const cp = body.match(/自分の魔力ゾーンの合計レベル\+(\d+)する/); if (cp) out.cap = Number(cp[1]);
+      return (equipCache[c.id] = out);
+    }
+    const equipsOf = inst => (inst.faceUp && !inst.silenced && inst.equips && inst.equips.length ? inst.equips.map(e => equipInfo(cardOf(e))) : []);
+    const kwOf = inst => {
+      if (!inst.faceUp || inst.silenced) return NEUTRAL_KW;
+      const base = parseCard(cardOf(inst)), eq = equipsOf(inst);
+      if (!eq.length) return base;
+      const k = Object.assign({}, base);
+      eq.forEach(e => { const q = e.kw; k.haste = k.haste || q.haste; k.watcher = k.watcher || q.watcher; k.mortal = k.mortal || q.mortal; k.pressure = Math.max(k.pressure, q.pressure); k.power += q.power; k.attack += q.attack; k.block += q.block; });
+      return k;
+    };   // 裏向き・能力禁止中は能力を持たない   // 裏向き（ガーディアン）は能力を持たない
     const ARENA_POWER = 3000;
     /* 円形闘技場：自分のターンの間、自分の戦場のガーディアンは「即応」を持つパワー3000のイジンでもある */
     const arenaOn = (G, pi) => G.current === pi && G.players[pi].field.some(x => x.faceUp && !x.silenced && cardOf(x).name === '円形闘技場');
@@ -199,6 +225,9 @@
       }
       if (fieldSrc(G, o, /自分の戦場の「航海」を持つイジンは「即応」を得る/) && /航海 - /.test(cardOf(inst).rule_text || '')) out.haste = true;   // フランソワ1世
       if (fieldSrc(G, o, /自分の戦場の「剣術」イジンは「即応」を得る/) && traitOn(G, inst, '剣術')) out.haste = true;   // 武者の蔵
+      // 蒸気機関車（装備）「これが戦場にいる間、自分の戦場のイジンは、自分の戦場のハイケイ1つにつき「パワー+500」を得る」
+      F.forEach(h => { if (!h.faceUp || h.silenced || !h.equips) return; h.equips.forEach(e => { const m = normTxt(equipBody(cardOf(e))).match(/自分の戦場のイジンは、自分の戦場のハイケイ1つにつき「パワー\+(\d+)」を得る/); if (m) out.power += Number(m[1]) * F.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').length; }); });
+      equipsOf(inst).forEach(e => { if (e.perColor) out.power += e.perColor * COLOR_CHARS.split('').filter(ch => ijinHasColor(G, inst, ch)).length; });   // シルククローク
       const gh = normTxt(cardOf(inst).rule_text).match(/カードが墓地に(\d+)枚以上ある間「即応/);   // レオニダス
       if (gh && !inst.silenced && G.players[o].grave.length >= Number(gh[1])) out.haste = true;
       const pt = normTxt(cardOf(inst).rule_text).match(/「航海」を持つイジンが自分の戦場にいる間「パワー\+(\d+)」を得る/);
@@ -209,6 +238,7 @@
     function ijinHasColor(G, inst, ch) {
       const c = cardOf(inst);
       if (String(c.color || '').includes(ch)) return true;
+      if (equipsOf(inst).some(e => e.colors.includes(ch))) return true;   // 装備「色：黄」など
       if (!G) return false;
       if (G.yellowTurn === G.turn && ch === '黄') return true;
       const o = ownerOf(G, inst);
@@ -558,7 +588,8 @@
       // アリエノール・ダキテーヌ「自分の魔力ゾーンのマリョクは「色：赤 青」を得る」
       if (P.mana.some(m => m.faceUp && cardsById[m.cardId].type === 'マリョク') &&
         (P.field || []).some(x => x.faceUp && !x.silenced && /自分の魔力ゾーンのマリョクは「色：赤\s?青」を得る/.test(cardsById[x.cardId].rule_text || ''))) { colors.add('赤'); colors.add('青'); }
-      return { cap: sum + down, colors, faceUpSum: sum, faceDown: down };
+      const eqCap = (P.field || []).reduce((t, x) => t + equipsOf(x).reduce((u, e) => u + e.cap, 0), 0);   // 万葉集「自分の魔力ゾーンの合計レベル+2する」
+      return { cap: sum + down + eqCap, colors, faceUpSum: sum, faceDown: down };
     }
 
     /* 色条件: カードの持つ色すべてが、表向きマリョクの色にあること（複数色カードの扱いはここで調整できます） */
@@ -1160,6 +1191,23 @@
       if (body && !body.split(/\s+/).every(t => KW_RE.test(t) || /^特性[:：]/.test(t) || /^「?特性[:：]/.test(t))) abilityFx(G, pi, cardOf(e), 'equip', host, `装備「${cardOf(e).name}」：${body}`);
       return { ok: true };
     }
+    /* イジン召喚でこのイジンが置かれる際に装備させられるカード：魔力ゾーンの表のマリョク・戦場の表のハイケイ・墓地の「冥装」 */
+    function equipCandidates(G, pi, host) {
+      const P = G.players[pi], hc = cardOf(host), out = [];
+      if (!host || !host.faceUp || hc.type !== 'イジン') return out;
+      const okFor = c => {
+        const t = normTxt(c.rule_text), m = t.match(/イジン召喚によって(.*?)イジンが自分の戦場に置かれる際/);
+        if (!m) return false;
+        const cond = m[1];
+        const tr = cond.match(/「([^」]+)」を持つ/); if (tr && !(new RegExp(tr[1] + ' - ').test(hc.rule_text || '') || hasTrait(hc, tr[1]))) return false;
+        const cols = cond.match(/([赤青緑黄紫])(?:か([赤青緑黄紫]))?の$/); if (cols && ![cols[1], cols[2]].filter(Boolean).some(ch => String(hc.color || '').includes(ch))) return false;   // 色は他の能力で得た色ではなく、カードの色で判定
+        return true;
+      };
+      P.mana.forEach(x => { if (x.faceUp && /装備させてもよい/.test(cardOf(x).rule_text || '') && !/冥装（/.test(cardOf(x).rule_text || '') && okFor(cardOf(x))) out.push({ uid: x.uid, zone: 'mana', name: cardOf(x).name }); });
+      P.field.forEach(x => { if (x !== host && x.faceUp && cardOf(x).type === 'ハイケイ' && /装備させてもよい/.test(cardOf(x).rule_text || '') && okFor(cardOf(x))) out.push({ uid: x.uid, zone: 'field', name: cardOf(x).name }); });
+      P.grave.forEach(x => { if (/冥装（/.test(cardOf(x).rule_text || '') && okFor(cardOf(x))) out.push({ uid: x.uid, zone: 'grave', name: cardOf(x).name + '（冥装）' }); });
+      return out;
+    }
     /* 装備を外す（元の場所に戻す） */
     function manualUnequip(G, pi, hostUid, equipUid) {
       const host = G.players[pi].field.find(x => x.uid === hostUid);
@@ -1562,14 +1610,18 @@
 
     /* ---------- デッキコンテスト ---------- */
     // ストーンマスク「イジン召喚によってイジンが自分の戦場に置かれる際、そのイジンに装備させてもよい。装備：戦場に置かれたとき、1ドローする」
+    const CARD_AI_EQUIP_SKIP = /^$/;
     function cpuEquipOnSummon(G, pi, host) {
       if (!G.aiPlayers.has(pi) || (G.cpuNoEffects && G.cpuNoEffects.has(pi)) || !host.faceUp) return;
       const P = G.players[pi];
-      const mask = P.mana.find(m => m.faceUp && /装備\s*[:：]\s*戦場に置かれたとき、1ドローする/.test(cardOf(m).rule_text || ''));
-      if (!mask || P.deck.length <= deckReserve(G, pi)) return;
+      // 装備させるもの：ストーンマスク（1ドロー）と、キーワード・パワー・色を与えるもの（ファイアソード「アタック+2000」など）
+      const cands = equipCandidates(G, pi, host).map(o => ({ o, x: zoneArr(P, o.zone).find(y => y.uid === o.uid) })).filter(({ x }) => x && !CARD_AI_EQUIP_SKIP.test(cardOf(x).name));
+      const good = ({ x }) => { const c = cardOf(x), e = equipInfo(c), k = e.kw;
+        if (/装備\s*[:：]\s*戦場に置かれたとき、1ドローする/.test(c.rule_text || '')) return P.deck.length > deckReserve(G, pi);
+        return k.attack + k.power + k.block >= 1000 || k.haste || k.pressure > 1 || e.cap > 0 || e.perColor > 0; };
       const cap = manaInfo(P).cap, need = Math.max(0, ...P.hand.filter(x => cardOf(x).type !== 'マリョク').map(x => cardOf(x).level || 0));
-      if (cap - (cardOf(mask).level || 0) < Math.min(need, 6)) return;   // レベル上限が足りなくなるなら装備しない
-      manualEquip(G, pi, mask.uid, 'mana', host.uid);
+      const pick = cands.filter(good).find(({ o, x }) => o.zone !== 'mana' || equipInfo(cardOf(x)).cap > 0 || cap - (cardOf(x).level || 0) >= Math.min(need, 6));   // 魔力ゾーンから外すとレベル上限が下がるので、足りなくなるなら装備しない
+      if (pick) manualEquip(G, pi, pick.o.uid, pick.o.zone, host.uid);
     }
     // 紡績工場「エンドフェイズが開始したとき、裏のカードが魔力ゾーンにないなら、これを破壊する。そうでなければ、魔力ゾーンの裏のカード1つを手札に戻す」
     function spinningMill(G) {
@@ -1943,7 +1995,7 @@
       '三層の舎利殿': { resolve(G, pi, ctx) { return ctx.kind === 'field' ? undefined : ctx.kind === 'endPhase' ? 'declined' : false; } },
       '蒸気機関車': {   // エンドフェイズ開始時：山札の上から2枚を見て、ハイケイを戦場に、残りを手札に
         resolve(G, pi, ctx) {
-          if (ctx.kind === 'field') return;   // 置いただけでは何も起きない（装備は使わない）
+          if (ctx.kind === 'field' || ctx.kind === 'equip') return;   // 装備の「即応」「ハイケイ1つにつきパワー+500」はエンジンが計算
           if (ctx.kind !== 'endPhase') return false;
           const P = G.players[pi], top = [];
           for (let k = 0; k < 2 && P.deck.length; k++) top.push(mkInst(P.deck.pop()));
@@ -3689,7 +3741,7 @@
       playProblems, summonInfo, manaInfo, parseCard, kwOf, powerOf, attackPowerOf, blockPowerOf, canAct,
       manualMove, manualTap, manualFlip, manualDraw, manualMill, manualRights, manualGuardianFromDeck, manualDestroy, manualPower,
       arenaOn, triggerInfo, resolveAnna, resolvePending,
-      effectPlan, cpuChooseAttack
+      effectPlan, cpuChooseAttack, equipCandidates
     };
     // 画面からの操作のあとにも「能力すべてを失う」常在能力を付け直す
     Object.keys(API).forEach(k => { const f = API[k]; if (typeof f !== 'function' || k === 'newGame') return; API[k] = function (G) { const r = f.apply(null, arguments); if (G && G.players) syncSilence(G); return r; }; });

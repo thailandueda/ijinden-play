@@ -198,3 +198,14 @@
 .sim-bar{ height:8px; border-radius:4px; background:rgba(255,255,255,.12); overflow:hidden; margin:6px 0; }
 .sim-bar span{ display:block; height:100%; background:linear-gradient(90deg, #f07a1a, #ffd460); }
 .sim-note{ font-size:11.5px; color:#bba98c; margin-top:4px; }
+
+/* 装備：イジンの下に装備カードを少し重ねて表示 */
+.equip-stack{ display:inline-flex; flex-direction:column; align-items:center; }
+.equip-stack.is-tapped-host{ margin: 0 12px; }
+.equip-stack.is-tapped-host > .mini-card.is-tapped{ margin:0; }
+.equip-slip{ width:96px; margin-top:-4px; padding:5px 6px 3px; font-size:9.5px; line-height:1.2; font-weight:700; color:#3b2a10;
+  background: linear-gradient(180deg, #e9cf86, #c9a24a); border-radius:0 0 6px 6px; box-shadow:0 2px 4px rgba(0,0,0,.35);
+  cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; position:relative; z-index:0; }
+.equip-slip + .equip-slip{ margin-top:-1px; width:90px; }
+.equip-stack > .mini-card{ position:relative; z-index:1; }
+.equip-slip:hover{ filter:brightness(1.08); }

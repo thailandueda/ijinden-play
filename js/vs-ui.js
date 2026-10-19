@@ -193,7 +193,8 @@
   document.body.appendChild(menuEl);
   function closeMenu() { menuEl.classList.remove('is-open'); menuEl.innerHTML = ''; }
   document.addEventListener('click', e => {
-    if (!menuEl.contains(e.target) && !e.target.closest('.mini-card') && !e.target.closest('[data-vsmenu]')) closeMenu();
+    if (!e.target.isConnected) return;   // メニューの項目から次のメニューを開いたとき（押したボタンはもう消えている）は閉じない
+    if (!menuEl.contains(e.target) && !e.target.closest('.mini-card') && !e.target.closest('[data-vsmenu]') && !e.target.closest('.equip-slip')) closeMenu();
   });
   function showMenu(title, items, anchor) {
     menuEl.innerHTML = '';
@@ -632,7 +633,7 @@
       const t = el('h3', 'zone-title', label);
       t.appendChild(el('span', 'zone-count', `(${P[key].length})`));
       z.appendChild(t);
-      if (key === 'mana' && pi === 0) z.appendChild(buildManaSummary(el('div', 'mana-summary'), P.mana));
+      if (key === 'mana' && pi === 0) z.appendChild(buildManaSummary(el('div', 'mana-summary'), P.mana, ENG.manaInfo(P)));
       if (key === 'field') {
         // 戦場は「イジン・ガーディアン」と「ハイケイ」の段に分けて表示する
         const isHaikei = inst => inst.faceUp && CARDS_BY_ID[inst.cardId].type === 'ハイケイ';
@@ -671,7 +672,7 @@
       e.appendChild(el('div', 'mini-card-meta', `${card.type} ・ ${statText(inst)}`));
       const kw = card.type === 'イジン' ? kwText(inst) : '';
       if (kw) e.appendChild(el('div', 'mini-card-meta', kw));
-      if (zone === 'field' && inst.equips && inst.equips.length) e.appendChild(el('div', 'mini-card-equips', inst.equips.map(q => '⚔' + CARDS_BY_ID[q.cardId].name).join(' ')));
+      if (zone === 'field' && inst.equips && inst.equips.length) e.classList.add('has-equips');
       e.classList.add('has-level');
       e.appendChild(miniLevelBadge(card));
     }
@@ -710,6 +711,25 @@
       }
     }
     if (!(pi === 1 && zone === 'hand')) e.addEventListener('click', () => onCardClick(inst, pi, zone, e));
+    e.dataset.uid = inst.uid;
+    // 装備されているカードは、イジンの下に少し重ねて表示（装備テキストだけが有効。クリックで詳細・外す）
+    if (zone === 'field' && inst.faceUp && inst.equips && inst.equips.length) {
+      const stack = el('div', 'equip-stack' + (inst.tapped ? ' is-tapped-host' : ''));
+      stack.appendChild(e);
+      inst.equips.forEach(q => {
+        const qc = CARDS_BY_ID[q.cardId];
+        const slip = el('div', 'equip-slip', '⚔ ' + qc.name);
+        slip.title = '装備：' + (String(qc.rule_text || '').match(/装備\s*(?:（[^）]*）)?\s*[:：]\s*([\s\S]*)$/) || ['', ''])[1].replace(/\s+/g, ' ');
+        slip.addEventListener('click', ev => {
+          ev.stopPropagation();
+          const items = [{ label: `装備カードの詳細：${qc.name}`, fn: () => openCardDetail(qc.id) }];
+          if (pi === 0) items.push({ label: `装備を外す（${q.origin && q.origin.zone === 'field' ? '戦場' : q.origin && q.origin.zone === 'grave' ? '墓地' : '魔力ゾーン'}に戻る）`, fn: () => run(ENG.manualUnequip(G, pi, inst.uid, q.uid)) });
+          showMenu(`装備：${qc.name}`, items, slip);
+        });
+        stack.appendChild(slip);
+      });
+      return stack;
+    }
     return e;
   }
 
@@ -772,6 +792,18 @@
     else openManualMenu(inst, pi, zone, anchor);
   }
 
+  /* イジン召喚のあと：装備させられるカードがあれば選ぶ（任意）。そのあとカード詳細を出す */
+  function afterSummon(inst, card) {
+    const G = VS.G, host = G.players[0].field.find(x => x.uid === inst.uid);
+    const cands = host ? ENG.equipCandidates(G, 0, host) : [];
+    if (!cands.length) { openCardDetail(card.id); return; }
+    const anchor = document.querySelector(`.mini-card[data-uid="${inst.uid}"]`) || document.body;
+    showMenu(`${card.name}に装備させますか？（任意）`, cands.map(o => ({
+      label: `⚔ ${o.name}を装備させる（${{ mana: '魔力ゾーン', field: '戦場', grave: '墓地' }[o.zone]}から）`,
+      fn: () => { run(ENG.manualEquip(G, 0, o.uid, o.zone, inst.uid)); }
+    })).concat(['-', { label: '装備させない', fn: () => openCardDetail(card.id) }]), anchor);
+  }
+
   function openHandMenu(inst, anchor) {
     const G = VS.G, P = G.players[0], card = CARDS_BY_ID[inst.cardId];
     const can = ENG.canAct(G, 0) && !VS.busy;
@@ -801,12 +833,12 @@
         fn: () => {
           const needModal = info.auto > 0 || info.hints.length > 0 || prob.length > 0;
           // 召喚したら、マホウの使用時と同じようにカード詳細を表示する（戦場に置かれたとき等の効果を確認するため）
-          if (!needModal) { if (run(ENG.summon(G, 0, inst.uid)).ok) openCardDetail(card.id); return; }
+          if (!needModal) { if (run(ENG.summon(G, 0, inst.uid)).ok) afterSummon(inst, card); return; }
           openSummonModal(card, {
             base: info.base, auto: info.auto, parts: info.parts, hints: info.hints,
             flips: info.flips.map(f => f.name)
           }, extra => ({ problems: ENG.playProblems(G, 0, card, extra), note: manaText(P) }),
-          extra => { if (run(ENG.summon(G, 0, inst.uid, extra)).ok) openCardDetail(card.id); }, { allowForce: false });
+          extra => { if (run(ENG.summon(G, 0, inst.uid, extra)).ok) afterSummon(inst, card); }, { allowForce: false });
         }
       });
     } else if (['ハイケイ', 'マホウ'].includes(card.type)) {
