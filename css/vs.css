@@ -132,6 +132,7 @@
 /* ===== 能力トースト・用語の注記 ===== */
 .toast.toast-ability{ font-size:clamp(20px, 3.8vw, 32px); border-color:var(--vermilion-bright); max-width:min(92vw, 760px); text-align:center;
   box-shadow:0 10px 40px rgba(0,0,0,.55), 0 0 28px rgba(240,85,31,.5); }
+.toast.toast-chain .toast-sub{ text-align:left; display:inline-block; }
 .kw-term{ border-bottom:1px dotted currentColor; cursor:help; }
 .kw-notes{ margin-top:8px; padding:7px 10px; border-left:3px solid var(--gold); background:rgba(233,168,37,.10); border-radius:4px; font-size:12px; line-height:1.55; }
 .kw-note + .kw-note{ margin-top:3px; }

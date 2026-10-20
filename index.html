@@ -231,6 +231,15 @@
         <button class="chip-toggle" data-val="on">あり（1回）</button>
       </div>
     </div>
+    <div class="field">
+      <label>演出（トースト表示）</label>
+      <div class="chip-group" id="vsFxLevel">
+        <button class="chip-toggle is-active" data-val="all">すべて</button>
+        <button class="chip-toggle" data-val="key">重要だけ</button>
+        <button class="chip-toggle" data-val="none">なし</button>
+      </div>
+      <p class="hint-text" style="margin-top:6px">「重要だけ」はダイブ・ターン開始・バトル・破壊・遺業能力・勝敗だけを表示します。能力の処理内容はログで確認できます。</p>
+    </div>
     <button class="btn btn-primary btn-block" id="vsStart">対戦開始</button>
     <button class="btn btn-ghost btn-block sim-btn" id="vsSim">CPU同士で100戦（デッキ評価）</button>
     <div class="sim-result" id="vsSimResult" hidden></div>

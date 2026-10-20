@@ -129,6 +129,20 @@
       try { localStorage.setItem(MULL_KEY, b.dataset.val === 'on' ? '1' : '0'); } catch (e) { /* 保存できない環境 */ }
     });
   });
+  /* 演出レベル：all=すべて／key=重要だけ／none=なし（勝敗のみ）。対戦中でもすぐ反映 */
+  const FX_KEY = 'ijinden-vs-fxlevel';
+  const fxLevel = () => { try { return localStorage.getItem(FX_KEY) || 'all'; } catch (e) { return 'all'; } };
+  document.querySelectorAll('#vsFxLevel .chip-toggle').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.val === fxLevel());
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#vsFxLevel .chip-toggle').forEach(x => x.classList.remove('is-active'));
+      b.classList.add('is-active');
+      try { localStorage.setItem(FX_KEY, b.dataset.val); } catch (e) { /* 保存できない環境 */ }
+    });
+  });
+  // 種類ごとに表示するか。key では能力の自動処理・効果によるドローを出さない
+  const KEY_FX = new Set(['dive', 'turn', 'attack', 'destroy', 'nodestroy', 'legacy', 'win']);
+  const fxShow = kind => { const lv = fxLevel(); return lv === 'all' || kind === 'win' || (lv === 'key' && KEY_FX.has(kind)); };
   /* 対戦を始める（再戦でも使う）。sel: 'first' | 'second' | 'random' */
   function startMatch(my, cpu, sel) {
     const first = sel === 'first' ? 0 : sel === 'second' ? 1 : (Math.random() < 0.5 ? 0 : 1);
@@ -138,7 +152,7 @@
     VS.mode = 'normal'; VS.selAtk = new Set(); VS.selBlocker = null; VS.assign = {}; VS.busy = false; VS.flashMsg = ''; VS.legacy = []; VS.annaSel = new Set(); VS.trig = null; VS.afterAnna = null; VS.assist = []; VS.assistTurn = 0; fxCursor = 0;
     $('vsSetupPanel').style.display = 'none';
     $('vsBoard').style.display = 'block';
-    schedule(2200, () => showToast('ダイブトゥイジンデン！', { variant: 'dive', ms: 2200 }));
+    if (fxShow('dive')) schedule(2200, () => showToast('ダイブトゥイジンデン！', { variant: 'dive', ms: 2200 }));
     if (VS.G.mulligan && VS.G.mulligan[0] === 'pending') VS.mode = 'mulligan';   // 引き直すかを先に決める
     render();
     if (VS.G.current === 1 && VS.mode !== 'mulligan') runCpu();
@@ -292,35 +306,70 @@
   }
   const atkName = a => (a.faceUp ? CARDS_BY_ID[a.cardId].name : 'ガーディアン');
   const whose = pi => (pi === 0 ? 'あなたの' : 'CPUの');
+  /* 1回の操作で連続した「能力の自動処理」「効果によるドロー」は、1枚のトーストにまとめる */
+  function chainLine(f) {
+    if (f.type === 'draw') {
+      const mine = f.pi === 0;
+      return `→ ${mine ? '' : 'CPU'}${f.n}ドロー` + (mine && f.names && f.names.length ? `（引いた：${f.names.join('、')}）` : '');
+    }
+    return `${whose(f.pi)}${f.name}：${f.text}`;
+  }
+  const chainable = f => (f.type === 'ability' && f.auto) || (f.type === 'draw' && !f.turn);
   function playFx(G, list) {
     const legacy = [];
-    list.forEach(f => {
+    let chain = [];
+    const flushChain = () => {
+      const c = chain; chain = [];
+      if (!c.length || !fxShow(c[0].type === 'draw' ? 'draw' : 'ability')) return;
+      if (c.length === 1) { showOne(c[0]); return; }
+      const ab = c.filter(f => f.type === 'ability');
+      const title = ab.length ? `${whose(ab[0].pi)}${ab[0].name}の能力` + (ab.length > 1 ? `ほか（${ab.length}件）` : '') : 'ドロー！';
+      const lines = c.map(chainLine);
+      const ms = Math.min(4200, 1500 + 450 * lines.length);
+      schedule(ms, () => showToast(title, { variant: 'ability toast-chain', sub: '自動処理：\n' + lines.join('\n'), ms }));
+    };
+    function showOne(f) {
       if (f.type === 'draw') {
+        if (!fxShow(f.turn ? 'turn' : 'draw')) return;
         const mine = f.pi === 0;
         const text = (f.turn ? (mine ? '俺のターン、ドロー！' : 'CPUのターン、ドロー！') : (mine ? 'ドロー！' : 'CPUドロー')) + (f.n > 1 ? ` ×${f.n}` : '');
         const sub = mine && f.names && f.names.length ? '引いたカード：' + f.names.join('、') : undefined;   // 自分が引いたカード名
         schedule(sub ? 1700 : 1300, () => showToast(text, { variant: mine ? 'me' : 'cpu', sub, ms: sub ? 1700 : 1300 }));
+      } else if (f.type === 'ability') {
+        if (!fxShow('ability')) return;
+        schedule(f.auto ? 1900 : 1500, () => showToast(`${whose(f.pi)}${f.name}の能力`, { variant: 'ability', sub: f.auto ? '自動処理：' + f.text : undefined, ms: f.auto ? 1900 : 1500 }));
+      }
+    }
+    list.forEach(f => {
+      if (chainable(f)) { chain.push(f); return; }
+      flushChain();
+      if (f.type === 'draw') {
+        showOne(f);
       } else if (f.type === 'attack') {
+        if (!fxShow('attack')) return;
         const text = `バトル！${f.pi === 0 ? '' : 'CPUの'}${f.names.join('・')}で攻撃！`;
         schedule(1800, () => showToast(text, { variant: 'long', ms: 1800 }));
       } else if (f.type === 'destroy') {
+        if (!fxShow('destroy')) return;
         const text = `${f.manual ? '' : 'バトルの結果、'}${whose(f.pi)}${f.items.map(x => x.name).join('、')}は破壊されて墓地へ`;
         schedule(2200, () => showToast(text, { variant: 'long', ms: 2200 }));
       } else if (f.type === 'nodestroy') {
+        if (!fxShow('nodestroy')) return;
         schedule(1600, () => showToast('バトルの結果、破壊されたカードはありません', { variant: 'long', ms: 1600 }));
       } else if (f.type === 'ability') {
-        // 自動処理した能力はトーストで知らせるだけ（効果アシストのバナーには出さない）
-        schedule(f.auto ? 1900 : 1500, () => showToast(`${whose(f.pi)}${f.name}の能力`, { variant: 'ability', sub: f.auto ? '自動処理：' + f.text : undefined, ms: f.auto ? 1900 : 1500 }));
-        if (f.text && !f.auto) VS.assist.push({ pi: f.pi, uid: f.uid, cardId: f.cardId, name: f.name, text: f.text, kind: f.kind });
+        // 手動で処理する能力：効果アシストのバナーに出す（演出レベルに関係なく必ず）
+        showOne(f);
+        if (f.text) VS.assist.push({ pi: f.pi, uid: f.uid, cardId: f.cardId, name: f.name, text: f.text, kind: f.kind });
       } else if (f.type === 'win') {
         const who = f.winner === 0 ? 'あなた' : 'CPU';
         schedule(3600, () => showToast(`対戦終了！${who}の勝利！`, { variant: 'long', sub: f.reason, ms: 3600 }));
       } else if (f.type === 'legacy') {
         if (G.winner !== null) return;   // 決着がついたら遺業能力は処理しない
-        schedule(1700, () => showToast(`遺業能力発動！ ${whose(f.pi)}${f.name}`, { variant: 'legacy', ms: 1700 }));
+        if (fxShow('legacy')) schedule(1700, () => showToast(`遺業能力発動！ ${whose(f.pi)}${f.name}`, { variant: 'legacy', ms: 1700 }));
         legacy.push(f);
       }
     });
+    flushChain();
     if (legacy.length) {
       VS.legacy = VS.legacy.concat(legacy);
       const wait = Math.max(0, fxCursor - Date.now());
