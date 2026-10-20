@@ -693,6 +693,16 @@
       b.appendChild(row);
     }
     if (G.winner === null && VS.assist.length) buildAssist(b);
+    if (G.winner === null && G.deferredTrig && G.deferredTrig.length) {
+      // ターンプレイヤー（あなた）の能力が先。CPUの能力は、あなたが処理し終えてから発動する
+      const row = el('div', 'vs-legacy-row vs-assist-row');
+      row.appendChild(el('div', 'vs-legacy-name', `⏳ 待機中：CPUの${G.deferredTrig.map(d => d.name).join('・')}の能力`));
+      row.appendChild(el('div', 'vs-legacy-text', 'ターンプレイヤーのあなたの能力が先に解決されます。あなたの能力を処理し終えたら、このボタンでCPUの能力を発動させてください（次の行動をしたときにも自動で発動します）。待機中に戦場を離れたり裏になったりしたカードの能力は発動しません。'));
+      const acts = el('div', 'vs-banner-actions');
+      const bt = el('button', 'btn btn-primary btn-sm', 'CPUの能力を処理する');
+      bt.addEventListener('click', guarded(() => { ENG.resolveDeferred(G); render(); }));
+      acts.appendChild(bt); row.appendChild(acts); b.appendChild(row);
+    }
     if (G.winner === null && VS.mode === 'legacy') {
       VS.legacy.forEach((f) => {
         const row = el('div', 'vs-legacy-row');

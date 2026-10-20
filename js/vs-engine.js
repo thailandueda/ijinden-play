@@ -3512,21 +3512,29 @@
         fxAt(G, m0, { type: 'ability', pi, kind: 'destroyed', cardId: inst.cardId, name: cardOf(inst).name, text: '破壊されていない状態にする', uid: inst.uid, auto: true });
         return 'saved';
       }
-      if (cardOf(inst).type === 'イジン') G.players[1 - pi].field.forEach(x => cpuTrigger(G, 1 - pi, x, /相手の戦場のイジンが破壊されるたび/, 'oppDestroyed'));
-      if (/(^|\n)\s*破壊されたとき/.test(cardOf(inst).rule_text || '')) cpuTrigger(G, pi, inst, /^破壊されたとき/, 'destroyed');
-      // 「イジンが破壊されるたび、1ドローする」（革命の広場）・「相手の戦場のガーディアンが破壊されるたび、1ドローする」（シャルル7世）：あなたのカード
-      [0, 1].forEach(q => { if (G.aiPlayers.has(q) || pillarOn(G)) return;
+      // 同時に発動待ちになった能力は、ターンプレイヤーの能力から先に処理する
+      const humanDraw = q => { if (G.aiPlayers.has(q) || pillarOn(G)) return;
+        // 「イジンが破壊されるたび、1ドローする」（革命の広場など）：あなたのカード
         G.players[q].field.forEach(x => { if (!x.faceUp || x.silenced) return; const t = normTxt(cardOf(x).rule_text);
           if (cardOf(inst).type === 'イジン' && /(^|\n)\s*イジンが破壊されるたび、1ドローする/.test(t)) { const m0 = G.fx.length; manualDraw(G, q, 1, `${cardOf(x).name}（イジンが破壊された）`); fxAt(G, m0, { type: 'ability', pi: q, kind: 'destroyed', cardId: x.cardId, name: cardOf(x).name, text: '1ドロー', uid: x.uid, auto: true }); }
-        }); });
-      // カトリーヌ・ド・メディシス「自分の戦場のイジンが破壊されたときに戦場で発動できる。相手の戦場のガーディアンすべてを寝かせる」
-      if (cardOf(inst).type === 'イジン' && G.aiPlayers.has(pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) P.field.forEach(x => {
-        if (!x.faceUp || x.silenced || !/自分の戦場のイジンが破壊されたときに戦場で発動できる。相手の戦場のガーディアンすべてを寝かせる/.test(normTxt(cardOf(x).rule_text))) return;
-        const m0 = G.fx.length;
-        G.players[1 - pi].field.filter(isGuardianInst).forEach(g => { g.tapped = true; });
-        log(G, `　${cardOf(x).name}の効果：相手のガーディアンすべてを寝かせました`); guardianTapped(G);
-        fxAt(G, m0, { type: 'ability', pi, kind: 'destroyed', cardId: x.cardId, name: cardOf(x).name, text: '相手のガーディアンすべてを寝かせる', uid: x.uid, auto: true });
-      });
+        }); };
+      const ownerSide = () => {
+        if (/(^|\n)\s*破壊されたとき/.test(cardOf(inst).rule_text || '')) cpuTrigger(G, pi, inst, /^破壊されたとき/, 'destroyed');
+        humanDraw(pi);
+        // カトリーヌ・ド・メディシス「自分の戦場のイジンが破壊されたときに戦場で発動できる。相手の戦場のガーディアンすべてを寝かせる」
+        if (cardOf(inst).type === 'イジン' && G.aiPlayers.has(pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(pi))) P.field.forEach(x => {
+          if (!x.faceUp || x.silenced || !/自分の戦場のイジンが破壊されたときに戦場で発動できる。相手の戦場のガーディアンすべてを寝かせる/.test(normTxt(cardOf(x).rule_text))) return;
+          const m0 = G.fx.length;
+          G.players[1 - pi].field.filter(isGuardianInst).forEach(g => { g.tapped = true; });
+          log(G, `　${cardOf(x).name}の効果：相手のガーディアンすべてを寝かせました`); guardianTapped(G);
+          fxAt(G, m0, { type: 'ability', pi, kind: 'destroyed', cardId: x.cardId, name: cardOf(x).name, text: '相手のガーディアンすべてを寝かせる', uid: x.uid, auto: true });
+        });
+      };
+      const oppSide = () => {
+        if (cardOf(inst).type === 'イジン') G.players[1 - pi].field.slice().forEach(x => { if (G.players[1 - pi].field.includes(x)) cpuTrigger(G, 1 - pi, x, /相手の戦場のイジンが破壊されるたび/, 'oppDestroyed'); });
+        humanDraw(1 - pi);
+      };
+      if (G.current === pi) { ownerSide(); oppSide(); } else { oppSide(); ownerSide(); }
     }
     // ガーディアンが自分の戦場に置かれるたび（孔子）
     function onGuardianPlaced(G, pi) {
@@ -3545,28 +3553,61 @@
       const peiOn = G.players.some(P => P.field.some(x => x.faceUp && !x.silenced && /他のカードの「執筆」は発動しない/.test(cardOf(x).rule_text || '')));
       // 茅葺き屋根の張出し舞台「相手のターンの間、黄でないカードの「執筆」は発動しない」（その持ち主の相手のターン）
       const kayabuki = [0, 1].some(r => G.current !== r && G.players[r].field.some(x => x.faceUp && !x.silenced && /相手のターンの間、黄でないカードの「執筆」は発動しない/.test(cardOf(x).rule_text || '')));
-      G.cpuTrigCtx = { haikei: inst };
-      [0, 1].forEach(q => G.players[q].field.slice().forEach(x => {
-        if (!x.faceUp || !/執筆 - /.test(cardOf(x).rule_text || '')) return;
-        if (peiOn && !/他のカードの「執筆」は発動しない/.test(cardOf(x).rule_text || '')) return;
-        if (kayabuki && !String(cardOf(x).color || '').includes('黄')) return;
-        cpuTrigger(G, q, x, /執筆 - /, 'shippitsu');
-      }));
-      G.cpuTrigCtx = null;
-      // あなたのカード：滝沢馬琴「執筆 - 黄のハイケイが戦場に置かれるたび、1ドローする」など（色つきハイケイの執筆ドロー）
-      if (inst) [0, 1].forEach(q => { if (G.aiPlayers.has(q)) return; G.players[q].field.forEach(x => {
-        if (!x.faceUp || x.silenced) return; const m = normTxt(cardOf(x).rule_text).match(/執筆 - (赤|青|緑|黄|紫)のハイケイが戦場に置かれるたび、1ドローする/);
-        if (m && String(cardOf(inst).color || '').includes(m[1])) { const m0 = G.fx.length; manualDraw(G, q, 1, cardOf(x).name); fxAt(G, m0, { type: 'ability', pi: q, kind: 'haikei', cardId: x.cardId, name: cardOf(x).name, text: '1ドロー', uid: x.uid, auto: true }); }
-      }); });
-      // 諸葛亮「黄のハイケイが自分の戦場に置かれるたび、1ドローする」
-      if (inst && String(cardOf(inst).color || '').includes('黄') && !(G.cpuNoEffects && G.cpuNoEffects.has(byPi)))
-        G.players[byPi].field.forEach(x => {
-          if (x.faceUp && !x.silenced && /黄のハイケイが自分の戦場に置かれるたび、1ドローする/.test(cardOf(x).rule_text || '')) {
-            const m0 = G.fx.length;
-            manualDraw(G, byPi, 1, cardOf(x).name);
-            fxAt(G, m0, { type: 'ability', pi: byPi, kind: 'haikei', cardId: x.cardId, name: cardOf(x).name, text: '1ドロー', uid: x.uid, auto: true });
+      // 同時に発動待ちになった執筆などは、ターンプレイヤーの能力から先に処理する。
+      // 先に処理した能力でカードが戦場を離れたり裏になったりしたら、その能力は発動しない
+      const order = [G.current, 1 - G.current];
+      let humanManual = false;   // ターンプレイヤーのあなたに手動で処理する執筆がある → CPUの執筆はそのあとで発動
+      order.forEach(q => {
+        G.cpuTrigCtx = { haikei: inst };
+        G.players[q].field.slice().forEach(x => {
+          if (!x.faceUp || x.silenced || !G.players[q].field.includes(x) || !/執筆 - /.test(cardOf(x).rule_text || '')) return;
+          if (peiOn && !/他のカードの「執筆」は発動しない/.test(cardOf(x).rule_text || '')) return;
+          if (kayabuki && !String(cardOf(x).color || '').includes('黄')) return;
+          if (!G.aiPlayers.has(q) && q === G.current) {
+            const text = paraOf(cardOf(x), /執筆 - /);
+            if (text && !humanAutoPlan(G, cardOf(x), text) && !/執筆 - (赤|青|緑|黄|紫)のハイケイが戦場に置かれるたび、1ドローする/.test(normTxt(cardOf(x).rule_text))) {
+              abilityFx(G, q, cardOf(x), 'shippitsu', x, text); humanManual = true; return;   // 効果アシストに出す
+            }
           }
+          if (humanManual && G.aiPlayers.has(q)) {
+            (G.deferredTrig = G.deferredTrig || []).push({ pi: q, uid: x.uid, name: cardOf(x).name, re: '執筆 - ', kind: 'shippitsu', haikeiUid: inst ? inst.uid : null });
+            log(G, `　${nm(G, q)}の${cardOf(x).name}の執筆は、${nm(G, G.current)}の能力を処理したあとに発動します（ターンプレイヤーの能力が先）`);
+            return;
+          }
+          cpuTrigger(G, q, x, /執筆 - /, 'shippitsu');
         });
+        G.cpuTrigCtx = null;
+        if (!inst) return;
+        // あなたのカード：滝沢馬琴「執筆 - 黄のハイケイが戦場に置かれるたび、1ドローする」など（色つきハイケイの執筆ドロー）
+        if (!G.aiPlayers.has(q)) G.players[q].field.forEach(x => {
+          if (!x.faceUp || x.silenced) return; const m = normTxt(cardOf(x).rule_text).match(/執筆 - (赤|青|緑|黄|紫)のハイケイが戦場に置かれるたび、1ドローする/);
+          if (m && String(cardOf(inst).color || '').includes(m[1])) { const m0 = G.fx.length; manualDraw(G, q, 1, cardOf(x).name); fxAt(G, m0, { type: 'ability', pi: q, kind: 'haikei', cardId: x.cardId, name: cardOf(x).name, text: '1ドロー', uid: x.uid, auto: true }); }
+        });
+        // 諸葛亮「黄のハイケイが自分の戦場に置かれるたび、1ドローする」
+        if (q === byPi && String(cardOf(inst).color || '').includes('黄') && !(G.cpuNoEffects && G.cpuNoEffects.has(byPi)))
+          G.players[byPi].field.forEach(x => {
+            if (x.faceUp && !x.silenced && /黄のハイケイが自分の戦場に置かれるたび、1ドローする/.test(cardOf(x).rule_text || '')) {
+              const m0 = G.fx.length;
+              manualDraw(G, byPi, 1, cardOf(x).name);
+              fxAt(G, m0, { type: 'ability', pi: byPi, kind: 'haikei', cardId: x.cardId, name: cardOf(x).name, text: '1ドロー', uid: x.uid, auto: true });
+            }
+          });
+      });
+    }
+    /* 待機中の相手（CPU）の能力を処理する。待機中に戦場を離れたり裏になったりしたカードの能力は発動しない */
+    function resolveDeferred(G) {
+      const list = G.deferredTrig || [];
+      if (!list.length) return 0;
+      G.deferredTrig = [];
+      list.forEach(d => {
+        const x = G.players[d.pi].field.find(y => y.uid === d.uid);
+        if (!x || !x.faceUp || x.silenced) { log(G, `　${nm(G, d.pi)}の${d.name}は戦場を離れた（または裏になった）ので、能力は発動しませんでした`); return; }
+        const h = d.haikeiUid == null ? null : G.players.reduce((r, P) => r || P.field.find(y => y.uid === d.haikeiUid), null);
+        G.cpuTrigCtx = { haikei: h };
+        cpuTrigger(G, d.pi, x, new RegExp(d.re), d.kind);
+        G.cpuTrigCtx = null;
+      });
+      return list.length;
     }
     // 決起：マリョク配置によってカードが自分の魔力ゾーンに置かれたとき（自分の魔力ゾーンのマリョクが4つ以上・張角がいれば3つ以上なら）
     function onManaPlaced(G, pi) {
@@ -3939,8 +3980,10 @@
       playProblems, summonInfo, manaInfo, parseCard, kwOf, powerOf, attackPowerOf, blockPowerOf, canAct,
       manualMove, manualTap, manualFlip, manualDraw, manualMill, manualRights, manualGuardianFromDeck, manualDestroy, manualPower,
       arenaOn, triggerInfo, resolveAnna, resolvePending,
-      effectPlan, cpuChooseAttack, equipCandidates, mulligan
+      effectPlan, cpuChooseAttack, equipCandidates, mulligan, resolveDeferred
     };
+    // 待機中のCPUの能力は、あなたが次の行動（配置・召喚・攻撃・ターン終了など）をする前に処理する
+    ['endTurn', 'placeMana', 'summon', 'useHaikei', 'useMahou', 'declareAttack'].forEach(k => { const f = API[k]; API[k] = function (G) { if (G && G.deferredTrig && G.deferredTrig.length) resolveDeferred(G); return f.apply(null, arguments); }; });
     // 画面からの操作のあとにも「能力すべてを失う」常在能力を付け直す
     Object.keys(API).forEach(k => { const f = API[k]; if (typeof f !== 'function' || k === 'newGame') return; API[k] = function (G) { const r = f.apply(null, arguments); if (G && G.players) syncSilence(G); return r; }; });
     API.syncSilence = syncSilence;
