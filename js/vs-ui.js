@@ -648,7 +648,10 @@
       lines.push('🕯 遺業フェーズ：能力を処理して「処理済み」を押してください。');
     } else if (VS.mode === 'anna' && VS.trig) {
       const info = ENG.triggerInfo(G, VS.trig);
-      lines.push(`アンナ・パブロワ：手札に戻すイジンを最大${info.n}体まで選んでください（選択 ${VS.annaSel.size}/${info.n}）`);
+      lines.push(`アンナ・パブロワ：手札に戻すイジンを最大${info.n}体まで選んでください（選択 ${VS.annaSel.size}/${info.max}）`);
+      // 内訳：上限の理由と、選べる対象の数
+      lines.push(`内訳：寝ているガーディアン あなた${info.tappedBy[0]}体・CPU${info.tappedBy[1]}体（計${info.per}体${info.annas > 1 ? ` × アンナ${info.annas}体` : ''}）→ 最大${info.n}体 ／ 戻せるイジン：あなた${info.targetsBy[0]}体・CPU${info.targetsBy[1]}体`);
+      if (info.targets.length < info.n) lines.push(`⚠ 戦場に戻せるイジンが${info.targets.length}体しかいないため、選べるのは${info.targets.length}体までです${ENG.arenaOn(G, G.current) ? '' : '（裏向きのガーディアンはイジンではないので選べません）'}。`);
       lines.push('双方の戦場のイジンをクリック → 上の「発動する」。使わないなら「発動しない」。' + (ENG.arenaOn(G, G.current) ? '（円形闘技場：そのターンのガーディアンもイジンとして選べます）' : ''));
     } else if (VS.mode === 'attack') {
       if (ENG.arenaOn(G, 0)) lines.push('円形闘技場の効果：ガーディアンもパワー3000のアタッカーとして選べます。');

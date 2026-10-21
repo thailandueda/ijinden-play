@@ -587,7 +587,10 @@
       const per = tappedGuardians(G);
       const n = per * annas;
       const targets = annaTargets(G);
-      return { valid: annas > 0 && n > 0 && targets.length > 0, n, per, annas, targets };
+      // 内訳（画面とログ用）：プレイヤーごとの寝ているガーディアン・戻せるイジンの数
+      const tappedBy = [0, 1].map(q => G.players[q].field.filter(x => isGuardianInst(x) && x.tapped).length);
+      const targetsBy = [0, 1].map(q => targets.filter(x => x.pi === q).length);
+      return { valid: annas > 0 && n > 0 && targets.length > 0, n, per, annas, targets, tappedBy, targetsBy, max: Math.min(n, targets.length) };
     }
     /* 防御側のブロックでガーディアンが寝ると誘発するアンナ・パブロワ（どちらのプレイヤーのものでも）。戻り値: 戦場にいる枚数 */
     const annaOnField = G => G.players.reduce((n, P) => n + P.field.filter(isAnna).length, 0);
@@ -597,8 +600,8 @@
         if (!annas.length) return;
         const c = cardOf(annas[0]);
         G.fx.push({ type: 'ability', pi, kind: 'trigger', cardId: c.id, name: c.name, text: '', uid: null });
-        log(G, `　${c.name}${annas.length > 1 ? `×${annas.length}` : ''}の能力が誘発しました（寝ているガーディアン${tappedGuardians(G)}体）`);
         const t = { kind: 'anna', pi, uids: annas.map(a => a.uid) };
+        log(G, `　${c.name}${annas.length > 1 ? `×${annas.length}` : ''}の能力が誘発しました：${annaDetail(G, t)}`);
         if (G.aiPlayers.has(pi)) aiAnna(G, t);
         else {
           const ex = G.triggers.find(x => x.pi === pi);   // 同じ持ち主の未処理の誘発があれば1つにまとめる
@@ -607,12 +610,18 @@
         }
       });
     }
+    // ログ用の内訳「最大2体（寝ているガーディアン：あなた2体・CPU0体、戻せるイジン：あなた1体・CPU1体）」
+    function annaDetail(G, t) {
+      const i = triggerInfo(G, t);
+      return `最大${i.n}体（寝ているガーディアン：${nm(G, 0)}${i.tappedBy[0]}体・${nm(G, 1)}${i.tappedBy[1]}体${i.annas > 1 ? `、アンナ${i.annas}体分` : ''}、戻せるイジン：${nm(G, 0)}${i.targetsBy[0]}体・${nm(G, 1)}${i.targetsBy[1]}体）`;
+    }
     /* targets: [{pi, uid}] を持ち主の手札に戻す */
     function resolveAnna(G, t, targets) {
       const idx = G.triggers.indexOf(t);
       if (idx >= 0) G.triggers.splice(idx, 1);
       const info = triggerInfo(G, t);
-      if (!info.valid) return { ok: true };
+      if (!info.valid) { log(G, `　アンナ・パブロワの能力：対象がいないため発動しません：${annaDetail(G, t)}`); return { ok: true }; }
+      log(G, `　アンナ・パブロワの能力を解決：${annaDetail(G, t)}、選んだのは${(targets || []).length}体`);
       const list = (targets || []).slice(0, info.n);
       const names = [];
       list.forEach(tg => {
