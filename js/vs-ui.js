@@ -459,6 +459,11 @@
       btn('発動しない', 'btn-ghost', () => finishAnna(false));
     } else if (VS.mode === 'block') {
       btn('ブロック確定', 'btn-primary', confirmBlocks);
+      // 遁甲式：魔力ゾーンで裏の遁甲カードを表にして発動（相手のターンのブロックステップ）
+      ENG.tonkoOptions(G, 0).forEach(o => {
+        const b = btn(`🀄 ${o.name}を発動 ▾`, 'btn-ghost', e => openTonkoMenu(o, e.currentTarget));
+        b.dataset.vsmenu = '1';
+      });
     } else {
       const canAtk = myTurn && ENG.canAct(G, 0) && !G.battleUsed && ENG.eligibleAttackers(G, 0).length > 0;
       btn('アタック宣言', 'btn-primary', startAttack, !canAtk);
@@ -659,6 +664,7 @@
     } else if (VS.mode === 'block') {
       lines.push('CPUがバトルを宣言しました！ 自分の戦場の緑枠のカード（ブロッカー）をクリックして指定します（アタッカーが複数いるときは、続けて守りたいアタッカー［赤枠］をクリック）。ブロッカーは必要数だけ複数選べます。もう一度クリックすると指定を外せます。「ブロック確定」で決定。');
       const atkP = G.players[G.current];
+      { const tk = ENG.tonkoOptions(G, 0); if (tk.length) lines.push(`🀄 魔力ゾーンに裏の${tk.map(o => o.name).join('・')}があります。ブロックを確定する前に、上のボタンから表にして発動できます。`); }
       if (annaRisk()) lines.push('⚠ アンナ・パブロワが戦場にいます：ガーディアンでブロックすると寝て誘発し、ブロッカーのイジンを手札に戻されることがあります。戻されたブロック分は防げません（ブロッカーの指定は終わっているため、代わりのブロックはできません）。');
       G.battle.attackers.forEach((u, i) => {
         const a = atkP.field.find(x => x.uid === u);
@@ -1058,6 +1064,34 @@
     showMenu((pi === 1 ? '【CPU】' : '') + title, items, anchor);
   }
 
+  /* 遁甲式：ガーディアン（山札の上に戻す）またはアタッカーを選んで発動 */
+  function openTonkoMenu(o, anchor) {
+    const G = VS.G, P = G.players[0], atkP = G.players[G.current];
+    const go = opt => {
+      const r = ENG.useTonko(G, 0, o.uid, opt);
+      if (!r.ok) { flash(r.msg); return; }
+      // いなくなったアタッカー・ブロッカーの指定を外す
+      Object.keys(VS.assign).forEach(k => {
+        if (!G.battle || !G.battle.attackers.includes(VS.assign[k]) || !P.field.some(x => x.uid === Number(k))) delete VS.assign[k];
+      });
+      if (VS.selBlocker != null && !P.field.some(x => x.uid === VS.selBlocker)) VS.selBlocker = null;
+      render();
+      if (r.noAttackers && G.winner === null) { VS.assign = {}; confirmBlocks(); }   // アタッカーがいなくなったらバトル終了へ
+    };
+    const items = [];
+    if (o.needAttacker) {
+      G.battle.attackers.forEach(u => {
+        const a = atkP.field.find(x => x.uid === u);
+        if (a) items.push({ label: `${a.faceUp ? CARDS_BY_ID[a.cardId].name : 'ガーディアン'}をアタッカーでない状態にする`, fn: () => go({ attackerUid: u }) });
+      });
+    } else {
+      const gs = P.field.filter(x => !x.faceUp && x.isGuardian);
+      gs.forEach((g, i) => items.push({ label: `ガーディアン${i + 1}（${CARDS_BY_ID[g.cardId].name}${g.tapped ? '・寝' : ''}）を山札の上に戻して発動`, fn: () => go({ guardianUid: g.uid }) }));
+      if (!gs.length) items.push({ label: '山札の上に戻せるガーディアンがいません', disabled: true, fn: () => {} });
+    }
+    items.push('-', { label: '🔍 カード詳細', fn: () => openCardDetail(CARDS_BY_ID[P.mana.find(m => m.uid === o.uid).cardId].id) });
+    showMenu(`${o.name}：${o.label}`, items, anchor);
+  }
   function openAdjustMenu(anchor) {
     const G = VS.G;
     showMenu('手動調整（カード効果の処理用）', [

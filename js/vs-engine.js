@@ -1024,6 +1024,58 @@
       return { ok: true };
     }
 
+    /* ---------- 遁甲式（あなた用）：相手のターンのブロックステップ開始時に、魔力ゾーンで裏の遁甲カードを表にして発動 ---------- */
+    const TONKO_RULES = [
+      { key: 'ban', re: /これが魔力ゾーンに裏で置かれているなら、これを表にして、アタッカー1体を指定して発動できる。そのアタッカーをアタッカーでない状態にする/, needAttacker: true, label: 'アタッカー1体をアタッカーでない状態にする' },
+      { key: 'moku', re: /魔力ゾーンのこれを表にして発動できる。自分の戦場のガーディアン1体を山札の上に戻して、アタッカーすべてをアタッカーでない状態にする/, needGuardian: true, label: 'アタッカーすべてをアタッカーでない状態にする' },
+      { key: 'fire', re: /魔力ゾーンのこれを表にして発動できる。自分の戦場のガーディアン1体を山札の上に戻して、相手の戦場の起きているイジンすべてを破壊する/, needGuardian: true, label: '相手の戦場の起きているイジンすべてを破壊する' },
+      { key: 'mirror', re: /魔力ゾーンのこれを表にして発動できる。自分の戦場のガーディアン1体を山札の上に戻して、戦場の寝ているイジンすべてを手札に戻す/, needGuardian: true, label: '戦場の寝ているイジンすべてを手札に戻す' }
+    ];
+    const tonkoRule = m => !m.faceUp && TONKO_RULES.find(r => r.re.test(normTxt(cardOf(m).rule_text)));
+    // 今使える遁甲カード：[{ uid, name, key, label, needAttacker, needGuardian }]
+    function tonkoOptions(G, pi) {
+      if (!G.battle || G.current === pi || G.battle.declared || pillarOn(G)) return [];
+      return G.players[pi].mana.map(m => { const r = tonkoRule(m); return r ? Object.assign({ uid: m.uid, name: cardOf(m).name }, r) : null; }).filter(Boolean);
+    }
+    function useTonko(G, pi, uid, opt) {
+      opt = opt || {};
+      const o = tonkoOptions(G, pi).find(x => x.uid === uid);
+      if (!o) return fail('今は発動できません（相手のターンのブロックステップで、魔力ゾーンに裏で置かれているときだけ）');
+      const P = G.players[pi], O = G.players[1 - pi], m = P.mana.find(x => x.uid === uid);
+      let g = null, a = null;
+      if (o.needGuardian) {
+        g = P.field.find(x => x.uid === opt.guardianUid && isGuardianInst(x));
+        if (!g) return fail('山札の上に戻すガーディアンを選んでください');
+      }
+      if (o.needAttacker) {
+        a = O.field.find(x => x.uid === opt.attackerUid && G.battle.attackers.includes(x.uid));
+        if (!a) return fail('アタッカーを選んでください');
+      }
+      const m0 = G.fx.length;
+      m.faceUp = true;
+      log(G, `${nm(G, pi)}：${o.name}（魔力ゾーンのこれを表にして発動）`);
+      if (g) { P.field.splice(P.field.indexOf(g), 1); P.deck.push(g.cardId); log(G, `　${nm(G, pi)}のガーディアン1体を山札の上に戻しました（山札${P.deck.length}枚）`); }
+      if (o.key === 'ban') {
+        G.battle.attackers = G.battle.attackers.filter(u => u !== a.uid);
+        log(G, `　${a.faceUp ? cardOf(a).name : 'ガーディアン'}はアタッカーでなくなりました`);
+      } else if (o.key === 'moku') {
+        G.battle.attackers = [];
+        log(G, '　アタッカーすべてがアタッカーでなくなりました');
+      } else if (o.key === 'fire') {
+        const up = O.field.filter(x => isIjinUp(x) && !x.tapped);
+        if (!up.length) log(G, `　${nm(G, 1 - pi)}の戦場に起きているイジンはいません`);
+        up.forEach(x => { const r = manualDestroy(G, 1 - pi, x.uid, o.name); if (!r.ok) log(G, `　${cardOf(x).name}は破壊されません`); });
+      } else if (o.key === 'mirror') {
+        const tapped = [1 - pi, pi].map(q => G.players[q].field.filter(x => isIjinUp(x) && x.tapped).slice());
+        if (!tapped[0].length && !tapped[1].length) log(G, '　戦場に寝ているイジンはいません');
+        [1 - pi, pi].forEach((q, i) => tapped[i].forEach(x => bounce(G, q, x, o.name)));
+      }
+      G.battle.attackers = G.battle.attackers.filter(u => O.field.some(x => x.uid === u));   // 戦場を離れたアタッカーは外す
+      fxAt(G, m0, { type: 'ability', pi, kind: 'block', cardId: m.cardId, name: o.name, text: o.label, uid: m.uid, auto: true });
+      syncSilence(G);
+      return { ok: true, noAttackers: !G.battle.attackers.length };
+    }
+
     /* assignment: { ブロッカーのuid: 防ぐアタッカーのuid } */
     function declareBlocks(G, defIdx, assignment) {
       if (!G.battle) return fail('バトル中ではありません');
@@ -1036,7 +1088,7 @@
         const bl = G.players[defIdx].field.find(x => x.uid === Number(k)), at = G.players[G.current].field.find(x => x.uid === assignment[k]);
         if (!canBlockAttacker(G, bl, at)) return fail(`${at && at.faceUp ? cardOf(at).name : 'このアタッカー'}はそのカードにブロックされません`);
       }
-      G.battle.blocks = Object.assign({}, assignment);
+      G.battle.blocks = Object.assign({}, assignment); G.battle.declared = true;
       log(G, `${nm(G, defIdx)}：ブロック指定（${keys.length}体）`);
       // ブロックしたカードは寝る。ガーディアンが寝たときの能力（アンナ・パブロワ）が誘発する
       let guardTapped = false;
@@ -3989,7 +4041,7 @@
       playProblems, summonInfo, manaInfo, parseCard, kwOf, powerOf, attackPowerOf, blockPowerOf, canAct,
       manualMove, manualTap, manualFlip, manualDraw, manualMill, manualRights, manualGuardianFromDeck, manualDestroy, manualPower,
       arenaOn, triggerInfo, resolveAnna, resolvePending,
-      effectPlan, cpuChooseAttack, equipCandidates, mulligan, resolveDeferred
+      effectPlan, cpuChooseAttack, equipCandidates, mulligan, resolveDeferred, tonkoOptions, useTonko
     };
     // 待機中のCPUの能力は、あなたが次の行動（配置・召喚・攻撃・ターン終了など）をする前に処理する
     ['endTurn', 'placeMana', 'summon', 'useHaikei', 'useMahou', 'declareAttack'].forEach(k => { const f = API[k]; API[k] = function (G) { if (G && G.deferredTrig && G.deferredTrig.length) resolveDeferred(G); return f.apply(null, arguments); }; });
