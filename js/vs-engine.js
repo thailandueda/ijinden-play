@@ -1043,7 +1043,8 @@
       if (!o) return fail('今は発動できません（相手のターンのブロックステップで、魔力ゾーンに裏で置かれているときだけ）');
       const P = G.players[pi], O = G.players[1 - pi], m = P.mana.find(x => x.uid === uid);
       let g = null, a = null;
-      if (o.needGuardian) {
+      // ガーディアンを山札の上に戻すのはコストではなく効果の一部。ガーディアンがいれば1体選んで戻し、0体なら戻さずに発動できる
+      if (o.needGuardian && P.field.some(isGuardianInst)) {
         g = P.field.find(x => x.uid === opt.guardianUid && isGuardianInst(x));
         if (!g) return fail('山札の上に戻すガーディアンを選んでください');
       }
@@ -1055,6 +1056,7 @@
       m.faceUp = true;
       log(G, `${nm(G, pi)}：${o.name}（魔力ゾーンのこれを表にして発動）`);
       if (g) { P.field.splice(P.field.indexOf(g), 1); P.deck.push(g.cardId); log(G, `　${nm(G, pi)}のガーディアン1体を山札の上に戻しました（山札${P.deck.length}枚）`); }
+      else if (o.needGuardian) log(G, `　${nm(G, pi)}の戦場にガーディアンがいないので、山札の上に戻さずに効果を処理します`);
       if (o.key === 'ban') {
         G.battle.attackers = G.battle.attackers.filter(u => u !== a.uid);
         log(G, `　${a.faceUp ? cardOf(a).name : 'ガーディアン'}はアタッカーでなくなりました`);
@@ -1678,12 +1680,14 @@
         const tj = re => D.mana.find(m => !m.faceUp && re.test(normTxt(cardOf(m).rule_text)));
         const flip = (m, text) => { m.faceUp = true; log(G, `　${cardOf(m).name}：魔力ゾーンのこれを表にして発動します`); G.fx.push({ type: 'ability', pi: 1 - pi, kind: 'block', cardId: m.cardId, name: cardOf(m).name, text, uid: m.uid, auto: true }); };
         const mok = tj(/これを表にして発動できる。自分の戦場のガーディアン1体を山札の上に戻して、アタッカーすべてをアタッカーでない状態にする/);
-        if (mok && danger() && takeGuardian(G, 1 - pi)) { const g = takeGuardian(G, 1 - pi); D.field.splice(D.field.indexOf(g), 1); D.deck.push(g.cardId); flip(mok, 'アタッカーすべてをアタッカーでない状態に'); G.battle.attackers = []; log(G, '　アタッカーすべてがアタッカーでなくなりました'); }
+        // ガーディアンを山札の上に戻すのはコストではなく効果の一部：ガーディアンが0体でも発動できる
+        const retG = () => { const g = takeGuardian(G, 1 - pi); if (g) { D.field.splice(D.field.indexOf(g), 1); D.deck.push(g.cardId); } };
+        if (mok && danger()) { retG(); flip(mok, 'アタッカーすべてをアタッカーでない状態に'); G.battle.attackers = []; log(G, '　アタッカーすべてがアタッカーでなくなりました'); }
         const ban = G.battle.attackers.length && tj(/これが魔力ゾーンに裏で置かれているなら、これを表にして、アタッカー1体を指定して発動できる。そのアタッカーをアタッカーでない状態にする/);
         if (ban && danger()) { const a = atks().sort((x, y) => requiredBlockers(y, G) - requiredBlockers(x, G) || attackPowerOf(y, G) - attackPowerOf(x, G))[0]; flip(ban, `${a.faceUp ? cardOf(a).name : 'ガーディアン'}をアタッカーでない状態に`); G.battle.attackers = G.battle.attackers.filter(u => u !== a.uid); }
         const fire = tj(/これを表にして発動できる。自分の戦場のガーディアン1体を山札の上に戻して、相手の戦場の起きているイジンすべてを破壊する/);
         const up = P.field.filter(x => isIjinUp(x) && !x.tapped).filter(notIndestructible(G));
-        if (fire && takeGuardian(G, 1 - pi) && up.reduce((t, x) => t + instValue(G, x), 0) >= 6000) { const g = takeGuardian(G, 1 - pi); D.field.splice(D.field.indexOf(g), 1); D.deck.push(g.cardId); flip(fire, '相手の起きているイジンすべてを破壊'); up.forEach(x => manualDestroy(G, pi, x.uid, cardOf(fire).name)); }
+        if (fire && up.reduce((t, x) => t + instValue(G, x), 0) >= 6000) { retG(); flip(fire, '相手の起きているイジンすべてを破壊'); up.forEach(x => manualDestroy(G, pi, x.uid, cardOf(fire).name)); }
       }
       // 遁甲式水鏡「相手のターンのブロックステップが開始したとき、魔力ゾーンのこれを表にして発動できる。自分の戦場のガーディアン1体を山札の上に戻して、戦場の寝ているイジンすべてを手札に戻す」
       if (G.aiPlayers.has(1 - pi) && !(G.cpuNoEffects && G.cpuNoEffects.has(1 - pi)) && G.battle) {
@@ -1691,11 +1695,11 @@
         const atks = G.battle.attackers.map(u => P.field.find(x => x.uid === u)).filter(Boolean);
         const g = mirror && takeGuardian(G, 1 - pi);
         const gain = atks.filter(a => a.faceUp).reduce((t, a) => t + instValue(G, a), 0) - D.field.filter(x => isIjinUp(x) && x.tapped).reduce((t, a) => t + instValue(G, a), 0);
-        if (mirror && g && !noBounce(G) && (!coverable(G, asAtk(G, atks), eligibleBlockers(G, 1 - pi)) || gain >= 9000)) {
+        if (mirror && !noBounce(G) && (!coverable(G, asAtk(G, atks), eligibleBlockers(G, 1 - pi)) || gain >= 9000)) {
           mirror.faceUp = true;
           const m0 = G.fx.length;
-          D.field.splice(D.field.indexOf(g), 1); D.deck.push(g.cardId);
-          log(G, `　${cardOf(mirror).name}：魔力ゾーンのこれを表にして、ガーディアン1体を山札の上に戻し、戦場の寝ているイジンすべてを手札に戻します`);
+          if (g) { D.field.splice(D.field.indexOf(g), 1); D.deck.push(g.cardId); }
+          log(G, `　${cardOf(mirror).name}：魔力ゾーンのこれを表にして、${g ? 'ガーディアン1体を山札の上に戻し、' : '（ガーディアンがいないので戻さずに）'}戦場の寝ているイジンすべてを手札に戻します`);
           [pi, 1 - pi].forEach(q => G.players[q].field.filter(x => isIjinUp(x) && x.tapped).slice().forEach(x => bounce(G, q, x, cardOf(mirror).name)));
           G.battle.attackers = G.battle.attackers.filter(u => P.field.some(x => x.uid === u));
           fxAt(G, m0, { type: 'ability', pi: 1 - pi, kind: 'block', cardId: mirror.cardId, name: cardOf(mirror).name, text: '寝ているイジンすべてを手札に戻す', uid: mirror.uid, auto: true });

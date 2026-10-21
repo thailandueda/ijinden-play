@@ -1087,7 +1087,7 @@
     } else {
       const gs = P.field.filter(x => !x.faceUp && x.isGuardian);
       gs.forEach((g, i) => items.push({ label: `ガーディアン${i + 1}（${CARDS_BY_ID[g.cardId].name}${g.tapped ? '・寝' : ''}）を山札の上に戻して発動`, fn: () => go({ guardianUid: g.uid }) }));
-      if (!gs.length) items.push({ label: '山札の上に戻せるガーディアンがいません', disabled: true, fn: () => {} });
+      if (!gs.length) items.push({ label: 'ガーディアンがいないので、戻さずに発動する', fn: () => go({}) });   // 戻すのはコストではなく効果の一部
     }
     items.push('-', { label: '🔍 カード詳細', fn: () => openCardDetail(CARDS_BY_ID[P.mana.find(m => m.uid === o.uid).cardId].id) });
     showMenu(`${o.name}：${o.label}`, items, anchor);
