@@ -152,6 +152,25 @@
       </div>
       <button class="btn btn-primary btn-block" id="btnStartGame">対戦開始（シャッフルして準備）</button>
       <p class="hint-text">山札をシャッフルし、手札6枚とガーディアン4枚を自動で準備します。カードの効果適用はご自身でルールテキストを確認しながら手動で行ってください。</p>
+
+      <div class="hc-panel">
+        <h2 class="panel-title">初手・展開チェッカー</h2>
+        <p class="hint-text" style="margin-top:0">上で選んだデッキ・先攻／後攻で何千回もシャッフルして、初手の事故率やターンごとの展開を確率で表示します。</p>
+        <div class="field">
+          <label>キーカード（引ける確率を見たいカード・最大3枚）</label>
+          <select id="hcKey1"></select>
+          <select id="hcKey2"></select>
+          <select id="hcKey3"></select>
+        </div>
+        <div class="field hc-opts">
+          <label class="hc-check"><input type="checkbox" id="hcMull"> 初手にマリョクが0枚なら1回引き直す</label>
+          <label class="hc-check">試行回数
+            <select id="hcTrials"><option value="1000">1,000回</option><option value="3000" selected>3,000回</option><option value="10000">10,000回</option></select>
+          </label>
+        </div>
+        <button class="btn btn-ghost btn-block" id="hcRun">チェックする</button>
+        <div id="hcResult" class="hc-result"></div>
+      </div>
     </div>
 
     <!-- Board -->
@@ -262,6 +281,7 @@
 <script src="js/summon-rules.js"></script>
 <script src="js/glossary.js"></script>
 <script src="js/app.js"></script>
+<script src="js/hand-checker.js"></script>
 <script src="js/vs-engine.js"></script>
 <script src="js/vs-ui.js"></script>
 </body>
