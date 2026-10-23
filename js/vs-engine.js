@@ -336,9 +336,9 @@
       // 演出の順番：「能力の説明」→「効果（ドロー・破壊など）」になるよう、効果を処理する前に能力の演出を積む
       const entry = { type: 'ability', pi, kind, cardId: card.id, name: card.name, text, uid: inst ? inst.uid : null, auto };
       G.fx.push(entry);
-      const prevSrc = G.srcKind; G.srcKind = kind;   // 能力の出どころ（炎上がる天守閣「戦場の能力によって」の判定用）
+      const prevSrc = G.srcKind, prevName = G.srcName; G.srcKind = kind; G.srcName = card.name;   // srcName：いま処理している能力のカード名（破壊などの理由の表示用）   // 能力の出どころ（炎上がる天守閣「戦場の能力によって」の判定用）
       const autoCpu = !auto && (G.aiPlayers.has(pi) ? cpuResolve(G, pi, card, text, { inst, kind }) : humanAuto(G, pi, card, text, { inst, kind }));
-      G.srcKind = prevSrc;   // CPUのカード効果（読める書式・対応済みカードだけ）
+      G.srcKind = prevSrc; G.srcName = prevName;   // CPUのカード効果（読める書式・対応済みカードだけ）
       entry.auto = auto || autoCpu;
       if (!auto && !autoCpu) log(G, `　${card.name}の能力：${text.replace(/\n/g, ' ')}（自動処理されません）`);
       if (!auto && !autoCpu && !onlyText) {   // 常在能力など自動で効いている文は除いて、手で処理が必要な文だけを見せる
@@ -1390,7 +1390,7 @@
       if (wasUp && onDestroyed(G, pi, inst) === 'saved') return { ok: true };
       if (wasUp && c.type === 'ハイケイ' && !pillarOn(G)) G.players.forEach((Q, q) => { if (!G.aiPlayers.has(q) || (G.cpuNoEffects && G.cpuNoEffects.has(q))) return;
         Q.field.filter(x => x.faceUp && !x.silenced && /ハイケイが破壊されるたび、1ドローする/.test(cardOf(x).rule_text || '')).forEach(x => { if (Q.deck.length > deckReserve(G, q)) manualDraw(G, q, 1, `${cardOf(x).name}（ハイケイが破壊された）`); }); });
-      G.fx.push({ type: 'destroy', pi, manual: true, items: [{ name: c.name, cardId: c.id }] });
+      G.fx.push({ type: 'destroy', pi, manual: true, by: by || G.srcName || null, items: [{ name: c.name, cardId: c.id }] });   // by：何の効果で破壊されたか（画面の表示用）
       detachedPalace(G, pi, c);
       if (hasLegacy(c) && !legacyBlocked(G, c) && !(G.aiPlayers.has(pi) && cpuLegacy(G, pi, inst.uid))) G.fx.push({ type: 'legacy', pi, uid: inst.uid, name: c.name, cardId: c.id, text: String(c.legacy_ability).trim() });
       return { ok: true };

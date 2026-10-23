@@ -350,6 +350,51 @@
     while (box.children.length > feedMax()) box.firstChild.remove();
     arm(item.manual ? feedMs() + 3000 : feedMs());
   }
+  /* 破壊以外で戦場からいなくなったカード（手札に戻る・裏にして魔力ゾーンへ・山札へ など）を、理由つきで左下に出す */
+  function fieldSnap(G) {
+    const m = new Map();
+    G.players.forEach((P, pi) => P.field.forEach(x => {
+      const c = CARDS_BY_ID[x.cardId];
+      const guard = !x.faceUp;
+      m.set(x.uid, { pi, name: guard ? (pi === 0 ? `ガーディアン（${c.name}）` : 'ガーディアン') : c.name, real: c.name, guard });
+    }));
+    return m;
+  }
+  // ログから理由（どのカードの効果か）を探す：「　〇〇：…（カード名）…」の〇〇、または直前の「〇〇の能力」
+  function reasonFor(G, name) {
+    const from = VS.logSeen || 0, L = G.log;
+    for (let i = L.length - 1; i >= from; i--) {
+      const m = String(L[i].m);
+      if (!m.includes(name)) continue;
+      const pre = m.match(/^\s*([^：\s]+?)(?:（[^）]*）)?：/);
+      if (pre && !/^(効果|あなた|CPU|【手動】|【バトル】)/.test(pre[1]) && pre[1] !== name) return pre[1];
+      if (/^【手動】/.test(m.trim())) return '__manual';
+      for (let j = i - 1; j >= Math.max(from - 1, 0); j--) {
+        const a = String(L[j].m).match(/^\s*(.+?)の能力(?:をCPUが)?(?:を)?(?:自動処理|：)/);
+        if (a) return a[1];
+        const b = String(L[j].m).match(/^(?:あなた|CPU)：(.+?)を(?:使用|召喚|表向きでマリョク配置)|ハイケイ「(.+?)」を使用|^(?:あなた|CPU)：(.+?)（魔力ゾーンのこれを表にして発動）/);
+        if (b) return b[1] || b[2] || b[3];
+      }
+      return null;
+    }
+    return null;
+  }
+  function reportDepartures(G) {
+    const prev = VS.snap, now = fieldSnap(G);
+    if (prev && VS.snapG === G && G.winner === null && fxShow('destroy')) {
+      prev.forEach((v, uid) => {
+        if (now.has(uid) || VS.destroyedNow.has(v.real)) return;
+        const P = G.players[v.pi];
+        const inMana = P.mana.find(x => x.uid === uid);
+        const dest = P.hand.some(x => x.uid === uid) ? '手札に戻りました' : inMana ? (inMana.faceUp ? '魔力ゾーンに置かれました' : '裏向きで魔力ゾーンに置かれました')
+          : P.grave.some(x => x.uid === uid) ? '墓地に置かれました' : G.players[1 - v.pi].field.some(x => x.uid === uid) ? '相手の戦場に移りました' : '山札に戻りました';
+        const why = reasonFor(G, v.guard ? 'ガーディアン' : v.real);
+        pushFeedLater({ pi: v.pi, title: `${whose(v.pi)}${v.name}が戦場を離れました`, tag: '戦場から', lines: [`理由：${why === '__manual' ? '手動で移動' : why ? why + 'の効果' : '効果（詳しくはログ）'}`, '→ ' + dest] });
+      });
+    }
+    VS.snap = now; VS.snapG = G; VS.logSeen = G.log.length;
+  }
+  const pushFeedLater = item => schedule(350, () => pushFeed(item));
   /* 1回の操作で連続した「能力の自動処理」「効果によるドロー」は、1枚にまとめる */
   function chainLine(f) {
     if (f.type === 'draw') {
@@ -401,7 +446,9 @@
         feed({ pi: f.pi, title: `バトル！${f.pi === 0 ? 'あなた' : 'CPU'}のアタック`, tag: 'バトル', lines: [f.names.join('・') + 'で攻撃'] });
       } else if (f.type === 'destroy') {
         if (!fxShow('destroy')) return;
-        feed({ pi: f.pi, title: `${whose(f.pi)}カードが破壊されました`, tag: f.manual ? '破壊' : 'バトルの結果', lines: [f.items.map(x => x.name).join('、') + ' → 墓地へ'] });
+        f.items.forEach(x => VS.destroyedNow.add(x.name));
+        const why = f.manual ? (f.by || reasonFor(G, f.items[0].name)) : null;
+        feed({ pi: f.pi, title: `${whose(f.pi)}${f.items.map(x => x.name).join('、')}が破壊されました`, tag: f.manual ? '破壊' : 'バトルの結果', lines: [f.manual ? `理由：${why && why !== '__manual' ? why + 'の効果' : '手動で破壊'}` : 'バトルに負けたため', '→ 墓地へ'] });
       } else if (f.type === 'nodestroy') {
         if (!fxShow('nodestroy')) return;
         feed({ pi: G.current, title: 'バトルの結果', tag: 'バトル', lines: ['破壊されたカードはありません'] });
@@ -451,7 +498,9 @@
     closeMenu();
     if (G.winner !== null && !G.recorded) { G.recorded = true; recordResult(G); }   // 決着したら戦績に1回だけ記録
     if (VS.assistTurn !== G.turn) { VS.assist = []; VS.assistTurn = G.turn; }   // ターンが変わったら効果アシストを片付ける
+    VS.destroyedNow = new Set();
     if (G.fx && G.fx.length) playFx(G, G.fx.splice(0));
+    reportDepartures(G);
     const root = $('vsBoard');
     // 再描画でログ欄が作り直されるので、スクロール位置を覚えておく
     const old = root.querySelector('.log-list');
