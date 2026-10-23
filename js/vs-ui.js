@@ -310,7 +310,17 @@
   const atkName = a => (a.faceUp ? CARDS_BY_ID[a.cardId].name : 'ガーディアン');
   const whose = pi => (pi === 0 ? 'あなたの' : 'CPUの');
   /* 能力・ドローの履歴：画面左下に積み上げる小さなカード（最大4件・新しいものが下。マウスを乗せている間は消えない） */
-  const FEED_MS = 5500;
+  // 消えるまでの時間（設定。0 = 消さない）。ブラウザに保存
+  const FEED_KEY = 'ijinden-vs-feedms';
+  const feedMs = () => { try { const v = localStorage.getItem(FEED_KEY); return v === null ? 10000 : Number(v); } catch (e) { return 10000; } };
+  document.querySelectorAll('#vsFeedTime .chip-toggle').forEach(b => {
+    b.classList.toggle('is-active', Number(b.dataset.val) === feedMs());
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#vsFeedTime .chip-toggle').forEach(x => x.classList.remove('is-active'));
+      b.classList.add('is-active');
+      try { localStorage.setItem(FEED_KEY, b.dataset.val); } catch (e) { /* 保存できない環境 */ }
+    });
+  });
   const feedMax = () => (window.matchMedia && window.matchMedia('(max-width: 600px)').matches ? 2 : 4);   // スマホは盤面を隠さないよう2件まで
   function feedBox() {
     let box = document.getElementById('vsFeed');
@@ -318,23 +328,26 @@
     return box;
   }
   function pushFeed(item) {
+    let timer = null;
+    const close = () => { clearTimeout(timer); card.classList.add('is-out'); setTimeout(() => card.remove(), 350); };
     if (!document.getElementById('tab-vs') || !document.getElementById('tab-vs').classList.contains('is-active')) return;
     const box = feedBox();
     const card = document.createElement('div');
     card.className = 'vs-feed-item' + (item.pi === 1 ? ' is-cpu' : ' is-me') + (item.manual ? ' is-manual' : '');
     const head = document.createElement('div'); head.className = 'vs-feed-head'; head.textContent = item.title;
     if (item.tag) { const t = document.createElement('span'); t.className = 'vs-feed-tag'; t.textContent = item.tag; head.appendChild(t); }
+    const x = document.createElement('button'); x.type = 'button'; x.className = 'vs-feed-close'; x.textContent = '×'; x.title = '閉じる'; x.setAttribute('aria-label', '閉じる');
+    x.addEventListener('click', ev => { ev.stopPropagation(); close(); });
+    head.appendChild(x);
     card.appendChild(head);
     (item.lines || []).forEach(l => { const d = document.createElement('div'); d.className = 'vs-feed-line'; d.textContent = l; card.appendChild(d); });
     if (item.cardId) { card.classList.add('is-link'); card.title = 'タップでカード詳細'; card.addEventListener('click', () => openCardDetail(item.cardId)); }
-    let timer = null;
-    const close = () => { card.classList.add('is-out'); setTimeout(() => card.remove(), 350); };
-    const arm = ms => { clearTimeout(timer); timer = setTimeout(close, ms); };
+    const arm = ms => { clearTimeout(timer); if (feedMs() > 0) timer = setTimeout(close, ms); };
     card.addEventListener('mouseenter', () => clearTimeout(timer));
-    card.addEventListener('mouseleave', () => arm(2500));
+    card.addEventListener('mouseleave', () => arm(Math.min(4000, feedMs())));
     box.appendChild(card);
     while (box.children.length > feedMax()) box.firstChild.remove();
-    arm(item.manual ? FEED_MS + 3000 : FEED_MS);
+    arm(item.manual ? feedMs() + 3000 : feedMs());
   }
   /* 1回の操作で連続した「能力の自動処理」「効果によるドロー」は、1枚にまとめる */
   function chainLine(f) {

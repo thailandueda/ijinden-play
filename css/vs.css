@@ -246,3 +246,5 @@
 @media (max-width: 600px){ .vs-feed{ left:8px; bottom:8px; width:calc(100vw - 16px); } .vs-feed-item{ font-size:12px; padding:6px 9px; } }
 @media (prefers-reduced-motion: reduce){ .vs-feed-item{ animation:none; } }
 @media (max-width: 600px){ .vs-status{ white-space:normal; } }
+.vs-feed-close{ margin-left:auto; background:none; border:none; color:#bba98c; font-size:15px; line-height:1; cursor:pointer; padding:0 2px; }
+.vs-feed-close:hover{ color: var(--gold-bright); }

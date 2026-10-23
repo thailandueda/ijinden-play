@@ -309,8 +309,15 @@
     const fxAt = (G, mark, e) => { G.fx.splice(Math.min(mark, G.fx.length), 0, e); };
     const abilityFx = (G, pi, card, kind, inst, onlyText) => {
       if (inst && inst.silenced) { log(G, `　${card.name}は能力禁止中のため、能力は発動しません`); return; }
-      const text = onlyText || SR.abilityText(card, kind);
+      let text = onlyText || SR.abilityText(card, kind);
       if (!text) return;
+      // 魔力ゾーンに表で置いたとき：「魔力ゾーンに置かれたとき」の段落だけを処理する。
+      // 装備（イジン召喚時に選ぶ）・サークル（召喚時のレベル軽減）・遁甲式（ブロックステップ）・メインフェイズ／エンドフェイズの能力・常在能力は、置いた時点では何もしない
+      if (kind === 'mana' && !onlyText) {
+        const paras = String(card.rule_text || '').split(/\n\s*\n/).map(p => p.split('\n').map(l => l.trim()).filter(Boolean).join('\n')).filter(p => /魔力ゾーンに置かれた(?:とき|際)|マリョク配置によって/.test(normTxt(p)));
+        if (!paras.length) return;
+        text = paras.join('\n');
+      }
       if (kind !== 'mahou' && kind !== 'legacy' && pillarOn(G) && !staticOnly(card, text)) {   // ピラー：戦場と魔力ゾーンの能力は発動できない
         G.fx.push({ type: 'ability', pi, kind, cardId: card.id, name: card.name, text, uid: inst ? inst.uid : null, auto: true });
         log(G, `　${card.name}の能力は、ピラーの効果で発動できません`); return;
@@ -370,6 +377,8 @@
       /^自分のメインフェイズが開始したとき、ハイケイの名前が戦場に\d+つ以上あるなら発動する$/, /^ゲームに勝利する$/,
       /^メインフェイズが開始したとき、ターンプレイヤーの戦場にイジンがいないなら、これを破壊する$/, /^そうでなければ、ターンプレイヤーの戦場のイジン1体を破壊する$/, /^そのイジンはターンプレイヤーが選ぶ$/,   // 喀血の流行り病
       /^自分はハイケイ使用に際し、色条件を満たしていなくても手札のカードを使える$/,                         // 伊能忠敬
+      /^自分はイジン召喚に際し、色条件を満たしていなくても手札のカードを使える$/, /^自分の手札のマホウは、レベルが\d+だけ増える$/,   // アルケミーストーン・聖人の蹄鉄
+      /^自分がイジン召喚する際、そのイジンのレベルは\d+だけ下がる$/, /^イジンが自分の戦場に置かれたとき、これを裏にする$/,   // サークル（召喚時に自動で軽減・裏にする）
       /^赤か紫のカードが戦場にある間「即応」を得る$/, /^緑か黄のカードが戦場にある間「ウォッチャー」を得る$/,   // 久坂玄瑞
       /^起きているイジンが相手の戦場にいる間、自分の戦場の「思想」イジンは「ダブルプレッシャー」を得る$/, /^これが戦場にいる間「決起」は発動しない$/,   // 吉田松陰                                         // 禁制の御殿（第6弾）                                                 // フランソワ1世
       /^これが戦場にある間、自分の戦場のレベル2以下のイジンは「特性：剣術」を得る$/, /^これが戦場にある間、自分の戦場の「剣術」イジンは「即応」を得る$/,   // 武者の蔵
@@ -558,6 +567,8 @@
         deckZero(G, pi);
       }
       G.phase = 'main';
+      // あなたのメインフェイズ開始時の能力（戦場：ドロー系は自動／魔力ゾーン：ホムンクルスなどを効果アシストに出す）。CPUは cpuStep で処理
+      if (!G.aiPlayers.has(G.current) && G.winner === null) cpuPhaseTriggers(G, G.current, 'mainStart');
       // 喀血の流行り病「メインフェイズが開始したとき、ターンプレイヤーの戦場にイジンがいないなら、これを破壊する。そうでなければ、ターンプレイヤーの戦場のイジン1体を破壊する（ターンプレイヤーが選ぶ）」
       if (!pillarOn(G)) G.players.forEach((Q, q) => Q.field.filter(x => x.faceUp && !x.silenced && /メインフェイズが開始したとき、ターンプレイヤーの戦場にイジンがいないなら、これを破壊する/.test(cardOf(x).rule_text || '')).forEach(x => {
         if (!Q.field.includes(x)) return;
@@ -729,10 +740,14 @@
       const hl = card.type === 'ハイケイ' ? haikeiLevel(P, card, G) : null;
       // アイオン「これのマホウ使用に際し、これのレベルは、自分の手札の他のカード1つにつき1だけ下がる」
       if (card.type === 'マホウ' && /これのマホウ使用に際し、これのレベルは、自分の手札の他のカード1つにつき1だけ下がる/.test(normTxt(card.rule_text))) red = (red || 0) + Math.max(0, (P.hand || []).length - 1);
-      const lv = hl !== null ? Math.min(hl, card.level) : SR.effectiveLevel(card.level, red);
+      // 聖人の蹄鉄「この能力は魔力ゾーンで効果を発揮する。自分の手札のマホウは、レベルが2だけ増える」
+      const shoe = card.type === 'マホウ' ? (P.mana || []).filter(m => m.faceUp && /自分の手札のマホウは、レベルが(\d+)だけ増える/.test(cardOf(m).rule_text || '')).reduce((t, m) => t + Number(normTxt(cardOf(m).rule_text).match(/レベルが(\d+)だけ増える/)[1]), 0) : 0;
+      const lv = (hl !== null ? Math.min(hl, card.level) : SR.effectiveLevel(card.level, red)) + shoe;
       const p = [];
       if (lv > cap) p.push(red ? `レベル条件（Lv${card.level}→軽減後${lv} > 上限${cap}）` : `レベル条件（Lv${card.level} > 上限${cap}）`);
-      const lack = colorsOf(card).filter(ch => !colors.has(ch));
+      // アルケミーストーン「この能力は魔力ゾーンで効果を発揮する。自分はイジン召喚に際し、色条件を満たしていなくても手札のカードを使える」
+      const alchemy = card.type === 'イジン' && (P.mana || []).some(m => m.faceUp && /自分はイジン召喚に際し、色条件を満たしていなくても手札のカードを使える/.test(cardOf(m).rule_text || ''));
+      const lack = alchemy ? [] : colorsOf(card).filter(ch => !colors.has(ch));
       const inoh = card.type === 'ハイケイ' && (P.field || []).some(x => x.faceUp && !x.silenced && /自分はハイケイ使用に際し、色条件を満たしていなくても手札のカードを使える/.test(cardOf(x).rule_text || ''));   // 伊能忠敬
       if (lack.length && !inoh) p.push(`色条件（${lack.join('')}が不足）`);
       return p;
@@ -1792,7 +1807,14 @@
     // CPUのメインフェイズ開始時・エンドフェイズ開始時の能力
     function cpuPhaseTriggers(G, pi, which) {
       if (!G.aiPlayers.has(pi)) {   // あなたのカード：メインフェイズ開始時・エンドフェイズ開始時のドロー系だけ自動（ニュートンなど）
-        if (pillarOn(G) || which === 'oppEnd') return;
+        if (pillarOn(G)) return;
+        // 魔力ゾーンで発動する能力は、そのタイミングで効果アシストに出す（ホムンクルス：メインフェイズ開始時／ギルデッドグース：相手のエンドフェイズ開始時）
+        const manaRe = which === 'mainStart' ? /^自分のメインフェイズが開始したとき/ : which === 'oppEnd' ? /相手のエンドフェイズが開始したときに魔力ゾーンで発動できる/ : /自分のエンドフェイズが開始したとき(?:に魔力ゾーンで)?/;
+        G.players[pi].mana.filter(x => x.faceUp && cardOf(x).type === 'マリョク' && manaRe.test(normTxt(cardOf(x).rule_text))).forEach(x => {
+          const text = String(cardOf(x).rule_text || '').split(/\n\s*\n/).map(p => p.split('\n').map(l => l.trim()).filter(Boolean).join('\n')).filter(p => manaRe.test(normTxt(p))).join('\n');
+          if (text) abilityFx(G, pi, cardOf(x), 'mana', x, text);
+        });
+        if (which === 'oppEnd') return;
         const re = which === 'mainStart' ? /自分のメインフェイズが開始したとき/ : /自分のエンドフェイズが開始したとき/;
         G.players[pi].field.slice().forEach(x => { if (x.faceUp && !x.silenced && re.test(cardOf(x).rule_text || '')) cpuTrigger(G, pi, x, re, which); });
         return;
@@ -3465,7 +3487,7 @@
       { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を、?裏のまま魔力ゾーンに置く$/, run: (G, pi, m) => {
         const P = G.players[pi]; for (let k = 0; k < KNUM[m[1]] && P.deck.length; k++) P.mana.push(mkInst(P.deck.pop(), { faceUp: false })); onFaceDownMana(G, pi);
         log(G, `　効果：${nm(G, pi)}の山札の上から${KNUM[m[1]]}枚を裏のまま魔力ゾーンに置きました`); } },
-      { re: /^自分の山札の上から([1-9])枚を墓地に置く$/, optPick: true, run: (G, pi, m) => { millN(G, pi, Number(m[1])); } },
+      { re: /^自分の山札の上から(?:カード)?([1-9])(?:枚|つ)を墓地に置く$/, optPick: true, run: (G, pi, m) => { millN(G, pi, Number(m[1])); } },
       { re: /^自分の手札([1-3])枚を墓地に置く$/, pick: true, run: (G, pi, m) => { discardLowest(G, pi, Number(m[1])); } },
       // ガーディアン
       { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を(?:裏向きの)?ガーディアン(?:にして|として)戦場に置く$/, run: (G, pi, m) => {
