@@ -257,7 +257,7 @@
         <button class="chip-toggle" data-val="key">重要だけ</button>
         <button class="chip-toggle" data-val="none">なし</button>
       </div>
-      <p class="hint-text" style="margin-top:6px">「重要だけ」はダイブ・ターン開始・バトル・破壊・遺業能力・勝敗だけを表示します。能力の処理内容はログで確認できます。</p>
+      <p class="hint-text" style="margin-top:6px">「すべて」では、能力の処理と効果によるドローを画面左下に小さく積み上げて表示します（タップでカード詳細）。「重要だけ」は中央のダイブ・ターン開始・バトル・破壊・遺業能力・勝敗だけを表示し、能力の処理内容はログで確認します。</p>
     </div>
     <button class="btn btn-primary btn-block" id="vsStart">対戦開始</button>
     <button class="btn btn-ghost btn-block sim-btn" id="vsSim">CPU同士で100戦（デッキ評価）</button>
@@ -276,6 +276,7 @@
 <!-- Action menu popover (for hand/field/mana cards in solo play) -->
 <div class="action-menu" id="actionMenu"></div>
 
+<script src="js/version.js"></script>
 <script src="js/cards-data.js"></script>
 <script src="js/preset-decks.js"></script>
 <script src="js/summon-rules.js"></script>

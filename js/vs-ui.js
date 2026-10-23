@@ -149,6 +149,7 @@
     closeMenu();
     VS.deckKeys = { my, cpu, sel };
     VS.G = ENG.newGame(getDeckByKey(my).cards, getDeckByKey(cpu).cards, first, [1], { mulligan: mullOn() });
+    { const fb = document.getElementById('vsFeed'); if (fb) fb.innerHTML = ''; }   // 前の対戦の履歴を消す
     VS.mode = 'normal'; VS.selAtk = new Set(); VS.selBlocker = null; VS.assign = {}; VS.busy = false; VS.flashMsg = ''; VS.legacy = []; VS.annaSel = new Set(); VS.trig = null; VS.afterAnna = null; VS.assist = []; VS.assistTurn = 0; fxCursor = 0;
     $('vsSetupPanel').style.display = 'none';
     $('vsBoard').style.display = 'block';
@@ -308,7 +309,34 @@
   }
   const atkName = a => (a.faceUp ? CARDS_BY_ID[a.cardId].name : 'ガーディアン');
   const whose = pi => (pi === 0 ? 'あなたの' : 'CPUの');
-  /* 1回の操作で連続した「能力の自動処理」「効果によるドロー」は、1枚のトーストにまとめる */
+  /* 能力・ドローの履歴：画面左下に積み上げる小さなカード（最大4件・新しいものが下。マウスを乗せている間は消えない） */
+  const FEED_MS = 5500;
+  const feedMax = () => (window.matchMedia && window.matchMedia('(max-width: 600px)').matches ? 2 : 4);   // スマホは盤面を隠さないよう2件まで
+  function feedBox() {
+    let box = document.getElementById('vsFeed');
+    if (!box) { box = document.createElement('div'); box.id = 'vsFeed'; box.className = 'vs-feed'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
+    return box;
+  }
+  function pushFeed(item) {
+    if (!document.getElementById('tab-vs') || !document.getElementById('tab-vs').classList.contains('is-active')) return;
+    const box = feedBox();
+    const card = document.createElement('div');
+    card.className = 'vs-feed-item' + (item.pi === 1 ? ' is-cpu' : ' is-me') + (item.manual ? ' is-manual' : '');
+    const head = document.createElement('div'); head.className = 'vs-feed-head'; head.textContent = item.title;
+    if (item.tag) { const t = document.createElement('span'); t.className = 'vs-feed-tag'; t.textContent = item.tag; head.appendChild(t); }
+    card.appendChild(head);
+    (item.lines || []).forEach(l => { const d = document.createElement('div'); d.className = 'vs-feed-line'; d.textContent = l; card.appendChild(d); });
+    if (item.cardId) { card.classList.add('is-link'); card.title = 'タップでカード詳細'; card.addEventListener('click', () => openCardDetail(item.cardId)); }
+    let timer = null;
+    const close = () => { card.classList.add('is-out'); setTimeout(() => card.remove(), 350); };
+    const arm = ms => { clearTimeout(timer); timer = setTimeout(close, ms); };
+    card.addEventListener('mouseenter', () => clearTimeout(timer));
+    card.addEventListener('mouseleave', () => arm(2500));
+    box.appendChild(card);
+    while (box.children.length > feedMax()) box.firstChild.remove();
+    arm(item.manual ? FEED_MS + 3000 : FEED_MS);
+  }
+  /* 1回の操作で連続した「能力の自動処理」「効果によるドロー」は、1枚にまとめる */
   function chainLine(f) {
     if (f.type === 'draw') {
       const mine = f.pi === 0;
@@ -320,30 +348,36 @@
   function playFx(G, list) {
     const legacy = [];
     let chain = [];
+    // 能力・効果によるドローは左下の履歴へ（順番を保つため、短い間隔で予約する）
+    const feed = item => schedule(350, () => pushFeed(item));
     const flushChain = () => {
       const c = chain; chain = [];
       if (!c.length || !fxShow(c[0].type === 'draw' ? 'draw' : 'ability')) return;
       if (c.length === 1) { showOne(c[0]); return; }
       const ab = c.filter(f => f.type === 'ability');
-      const title = ab.length ? `${whose(ab[0].pi)}${ab[0].name}の能力` + (ab.length > 1 ? `ほか（${ab.length}件）` : '') : 'ドロー！';
-      const lines = c.map(chainLine);
-      const ms = Math.min(4200, 1500 + 450 * lines.length);
-      schedule(ms, () => showToast(title, { variant: 'ability toast-chain', sub: '自動処理：\n' + lines.join('\n'), ms }));
+      const title = ab.length ? `${whose(ab[0].pi)}${ab[0].name}の能力` + (ab.length > 1 ? `ほか${ab.length - 1}件` : '') : 'ドロー！';
+      feed({ pi: (ab[0] || c[0]).pi, title, tag: '自動処理', lines: c.map(chainLine), cardId: ab.length ? ab[0].cardId : null });
     };
     function showOne(f) {
       if (f.type === 'draw') {
         if (!fxShow(f.turn ? 'turn' : 'draw')) return;
         const mine = f.pi === 0;
-        const text = (f.turn ? (mine ? '俺のターン、ドロー！' : 'CPUのターン、ドロー！') : (mine ? 'ドロー！' : 'CPUドロー')) + (f.n > 1 ? ` ×${f.n}` : '');
+        if (!f.turn) {   // 効果によるドロー：左下の履歴へ
+          feed({ pi: f.pi, title: (mine ? 'ドロー！' : 'CPUドロー') + (f.n > 1 ? ` ×${f.n}` : ''), lines: mine && f.names && f.names.length ? ['引いたカード：' + f.names.join('、')] : [] });
+          return;
+        }
+        // ターン開始のドローは、ターンが変わった合図として中央に出す
+        const text = (mine ? '俺のターン、ドロー！' : 'CPUのターン、ドロー！') + (f.n > 1 ? ` ×${f.n}` : '');
         const sub = mine && f.names && f.names.length ? '引いたカード：' + f.names.join('、') : undefined;   // 自分が引いたカード名
         schedule(sub ? 1700 : 1300, () => showToast(text, { variant: mine ? 'me' : 'cpu', sub, ms: sub ? 1700 : 1300 }));
       } else if (f.type === 'ability') {
         if (!fxShow('ability')) return;
-        schedule(f.auto ? 1900 : 1500, () => showToast(`${whose(f.pi)}${f.name}の能力`, { variant: 'ability', sub: f.auto ? '自動処理：' + f.text : undefined, ms: f.auto ? 1900 : 1500 }));
+        if (f.auto) feed({ pi: f.pi, title: `${whose(f.pi)}${f.name}の能力`, tag: '自動処理', lines: f.text ? [f.text] : [], cardId: f.cardId });
+        else feed({ pi: f.pi, title: `${whose(f.pi)}${f.name}の能力`, tag: f.pi === 0 && f.text ? '手動で処理' : null, lines: f.pi === 0 && f.text ? ['上の案内の「効果アシスト」から処理できます'] : [], cardId: f.cardId, manual: f.pi === 0 && !!f.text });
       }
     }
     list.forEach(f => {
-      if (chainable(f)) { chain.push(f); return; }
+      if (chainable(f)) { if (chain.length && chain[chain.length - 1].pi !== f.pi) flushChain(); chain.push(f); return; }   // プレイヤーが変わったら別の1件に
       flushChain();
       if (f.type === 'draw') {
         showOne(f);
@@ -477,7 +511,32 @@
     main.appendChild(act);
     bar.appendChild(main);
     bar.appendChild(buildLog());
+    // 固定バーの1行案内（いま何をする場面か）。タップで詳しい案内の位置へ
+    const st = statusLine(G);
+    const line = el('button', 'vs-status' + (st.warn ? ' is-warn' : ''), st.text);
+    line.type = 'button';
+    line.title = '詳しい案内を表示';
+    line.addEventListener('click', () => { const bn = document.querySelector('#vsBoard .vs-banner'); if (bn) bn.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+    bar.appendChild(line);
     return bar;
+  }
+  function statusLine(G) {
+    if (VS.flashMsg) return { text: '⚠ ' + VS.flashMsg, warn: true };
+    if (G.winner !== null) return { text: G.winner === 0 ? '🎉 あなたの勝利！' : 'CPUの勝利…' };
+    if (VS.mode === 'mulligan') return { text: '🃏 手札を引き直すか決めてください' };
+    if (VS.mode === 'legacy') return { text: `🕯 遺業能力を処理してください（${VS.legacy.length}件）` };
+    if (VS.mode === 'anna' && VS.trig) { const i = ENG.triggerInfo(G, VS.trig); return { text: `アンナ・パブロワ：手札に戻すイジンを選択（${VS.annaSel.size}/${i.max}）` }; }
+    if (VS.mode === 'attack') return { text: `⚔ アタッカーを選んで「アタック確定」（選択 ${VS.selAtk.size}体）` };
+    if (VS.mode === 'block' && G.battle) {
+      const atkP = G.players[G.current];
+      const lack = G.battle.attackers.map((u, i) => { const a = atkP.field.find(x => x.uid === u); if (!a) return null; const need = ENG.requiredBlockers(a, G); const n = Object.values(VS.assign).filter(v => v === u).length; return n < need ? `攻${i + 1} ${atkName(a)} あと${need - n}体` : null; }).filter(Boolean);
+      const tk = ENG.tonkoOptions(G, 0).length ? '　🀄遁甲を使えます' : '';
+      return lack.length ? { text: `🛡 ブロック指定中：${lack.join('、')}${tk}`, warn: true } : { text: `🛡 ブロック指定中：必要数を満たしています →「ブロック確定」${tk}` };
+    }
+    if (G.deferredTrig && G.deferredTrig.length) return { text: `⏳ CPUの${G.deferredTrig.map(d => d.name).join('・')}の能力が待機中` };
+    if (VS.assist.length) return { text: `✦ 手動で処理する能力が${VS.assist.length}件あります` };
+    if (G.current === 1) return { text: 'CPUのターン…' };
+    return { text: `あなたのターン：手札のカードをクリックして行動${G.battleUsed ? '（バトルは使用済み）' : ''}` };
   }
 
   /* 遺業能力の「実行」ボタン（墓地に置かれたカードを、能力どおりに動かす） */

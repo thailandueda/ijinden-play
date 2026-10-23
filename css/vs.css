@@ -211,3 +211,38 @@
 .equip-stack > .mini-card{ position:relative; z-index:1; }
 .equip-slip:hover{ filter:brightness(1.08); }
 
+
+/* ===== 固定バーの1行案内 ===== */
+.vs-status{
+  flex:1 1 100%; order:5; display:block; width:100%; text-align:left; cursor:pointer;
+  margin:2px 0 0; padding:6px 10px; border-radius:6px; border:1px solid rgba(230,200,105,.45);
+  background: rgba(0,0,0,.28); color: var(--gold-bright); font:inherit; font-size:13px; font-weight:700;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.vs-status.is-warn{ border-color: var(--vermilion-bright); color:#ffb08a; }
+.vs-status:hover{ background: rgba(0,0,0,.4); }
+
+/* ===== 能力・ドローの履歴（画面左下に積み上げ） ===== */
+.vs-feed{
+  position:fixed; left:16px; bottom:16px; z-index:45; width:min(340px, calc(100vw - 32px));
+  display:flex; flex-direction:column; gap:6px; pointer-events:none;
+}
+.vs-feed-item{
+  pointer-events:auto; background: rgba(28,20,12,.94); border:1px solid var(--line); border-left:4px solid var(--gold);
+  border-radius:8px; padding:7px 10px; box-shadow:0 6px 18px rgba(0,0,0,.5); font-size:12.5px; line-height:1.5;
+  animation: feedIn .25s ease-out;
+}
+.vs-feed-item.is-me{ border-left-color: var(--gold-bright); }
+.vs-feed-item.is-cpu{ border-left-color: var(--vermilion-bright); }
+.vs-feed-item.is-manual{ border-color: var(--gold-bright); }
+.vs-feed-item.is-link{ cursor:pointer; }
+.vs-feed-item.is-out{ opacity:0; transform:translateX(-12px); transition: opacity .3s, transform .3s; }
+.vs-feed-head{ font-weight:700; color: var(--gold-bright); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.vs-feed-item.is-cpu .vs-feed-head{ color:#ffb08a; }
+.vs-feed-tag{ font-size:10.5px; font-weight:700; padding:0 6px; border-radius:999px; background: rgba(230,200,105,.18); color:#e3d3b4; }
+.vs-feed-item.is-manual .vs-feed-tag{ background: var(--gold-bright); color:#2a1d0f; }
+.vs-feed-line{ color:#e3dcc3; overflow-wrap:anywhere; }
+@keyframes feedIn{ from{ opacity:0; transform:translateX(-12px); } to{ opacity:1; transform:none; } }
+@media (max-width: 600px){ .vs-feed{ left:8px; bottom:8px; width:calc(100vw - 16px); } .vs-feed-item{ font-size:12px; padding:6px 9px; } }
+@media (prefers-reduced-motion: reduce){ .vs-feed-item{ animation:none; } }
+@media (max-width: 600px){ .vs-status{ white-space:normal; } }
