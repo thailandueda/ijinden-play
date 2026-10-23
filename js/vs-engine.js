@@ -858,9 +858,9 @@
       inst.faceUp = true; inst.tapped = false; inst.isGuardian = false; inst.placedTurn = G.turn;
       P.field.push(inst);
       enterTapped(G, pi, inst);
-      onIjinPlaced(G, pi, inst);
       const lvNote = red > 0 ? `／召喚時Lv${SR.effectiveLevel(card.level, red)}（軽減${red}）` : '';
       log(G, `${nm(G, pi)}：${card.name}（Lv${card.level}・パワー${powerOf(inst, G)}${lvNote}）を召喚`);
+      onIjinPlaced(G, pi, inst);
       if (P.oiCut) P.oiCut = null;
       abilityFx(G, pi, card, 'field', inst);
       cpuEquipOnSummon(G, pi, inst);
@@ -1006,9 +1006,22 @@
       // 「アタッカーになったとき」の能力（航海など）を演出・手動処理の対象にする
       insts.filter(i => i.faceUp).forEach(i => {
         const c = cardOf(i);
-        const lines = String(c.rule_text || '').split(/\n+/).map(l => l.trim()).filter(l => /アタッカーになったとき/.test(l) && !/(相手|自分)の戦場の[^、]*がアタッカーになったとき/.test(l) && !/^これが戦場にいる間/.test(l));   // 「相手の〜がアタッカーになったとき」は自分のアタックでは発動しない
+        const lines = String(c.rule_text || '').split(/\n+/).map(l => l.trim()).filter(l => /アタッカーになったとき/.test(l) && !/(相手|自分)の戦場の[^、]*がアタッカーになったとき/.test(l) && !/^これが戦場にいる間/.test(l))
+          .filter(l => { const pw = normTxt(l).match(/^パワー(\d+)以上の間「アタッカーになったとき/); return !pw || powerOf(i, G) >= Number(pw[1]); });   // シーボルト：条件を満たさない間は能力を持たない   // 「相手の〜がアタッカーになったとき」は自分のアタックでは発動しない
         if (lines.length) abilityFx(G, pi, c, 'attack', i, lines.join('\n'));
       });
+      // 阿倍仲麻呂「「航海」が発動したとき、1ドローして、これを起こす」（航海を持つアタッカー1体につき1回。あなた・CPU共通）
+      if (!pillarOn(G)) {
+        const voyages = insts.filter(a => a.faceUp && !a.silenced && /航海 - /.test(cardOf(a).rule_text || '')).length;
+        if (voyages) P.field.filter(x => x.faceUp && !x.silenced && /「航海」が発動したとき、1ドローして、これを起こす/.test(normTxt(cardOf(x).rule_text))).forEach(x => {
+          for (let k = 0; k < voyages; k++) {
+            const m0 = G.fx.length;
+            manualDraw(G, pi, 1, `${cardOf(x).name}（航海が発動）`);
+            if (x.tapped) { x.tapped = false; log(G, `　${cardOf(x).name}を起こしました`); }
+            fxAt(G, m0, { type: 'ability', pi, kind: 'attack', cardId: x.cardId, name: cardOf(x).name, text: '1ドローして、これを起こす', uid: x.uid, auto: true });
+          }
+        });
+      }
       if (insts.some(i => !i.faceUp)) { log(G, '　円形闘技場の効果：ガーディアンがパワー3000のアタッカーになりました'); guardianTapped(G); }
       // 栄西「自分が1体だけでアタックしたときに発動する。このターンの間、アタッカーは「ダブルプレッシャー」を得る」
       if (insts.length === 1 && P.field.some(x => x.faceUp && !x.silenced && /自分が1体だけでアタックしたときに発動する。このターンの間、アタッカーは「ダブルプレッシャー」を得る/.test(cardOf(x).rule_text || ''))) {
@@ -1647,6 +1660,12 @@
         const t = normTxt(cardOf(x).rule_text).match(/「([^」]+)」イジンが自分の戦場に置かれたときに発動できる/);   // 本居宣長
         if (t && hasTrait(cardOf(inst), t[1])) cpuTrigger(G, pi, x, /イジンが自分の戦場に置かれたときに発動できる/, 'ownIjin');
       });
+      // アテルイ「「剣術」イジンが戦場に置かれたとき、これを起こす」（どちらの戦場に置かれても。強制）
+      if (hasTrait(cardOf(inst), '剣術')) [0, 1].forEach(q => G.players[q].field.forEach(x => {
+        if (x === inst || !x.faceUp || x.silenced || !x.tapped || !/「剣術」イジンが戦場に置かれたとき、これを起こす/.test(normTxt(cardOf(x).rule_text))) return;
+        x.tapped = false; log(G, `　${cardOf(x).name}の効果：「剣術」イジンが戦場に置かれたので起きました`);
+        G.fx.push({ type: 'ability', pi: q, kind: 'ownIjin', cardId: x.cardId, name: cardOf(x).name, text: 'これを起こす', uid: x.uid, auto: true });
+      }));
       G.players[1 - pi].field.forEach(x => {
         if (!G.aiPlayers.has(1 - pi) || !x.faceUp || x.silenced) return;
         if (/イジンが相手の戦場に置かれるたび、自分の山札の上から1枚をガーディアンにして戦場に置く/.test(cardOf(x).rule_text || '')) {
@@ -1755,9 +1774,11 @@
           if (a) { a.tapped = false; log(G, `　毘盧遮那仏像：${cardOf(a).name}を起こしました`); G.fx.push({ type: 'ability', pi, kind: 'attackDecl', cardId: t.cardId, name: '毘盧遮那仏像', text: `${cardOf(a).name}を起こす`, uid: t.uid, auto: true }); }
         });
       }
-      if (G.aiPlayers.has(1 - pi) && insts.some(a => a.faceUp && hasHaste(G, a))) {
+      // フェルセン「相手の戦場の「即応」を持つイジンがアタッカーになったとき、これを起こす」（強制。あなた・CPU共通）
+      if (!pillarOn(G) && insts.some(a => a.faceUp && hasHaste(G, a))) {
         D.field.filter(x => x.faceUp && !x.silenced && x.tapped && /相手の戦場の「即応」を持つイジンがアタッカーになったとき、これを起こす/.test(cardOf(x).rule_text || '')).forEach(x => {
           x.tapped = false; log(G, `　${cardOf(x).name}の効果：起きました`);
+          G.fx.push({ type: 'ability', pi: 1 - pi, kind: 'oppAttack', cardId: x.cardId, name: cardOf(x).name, text: 'これを起こす', uid: x.uid, auto: true });
         });
       }
     }
@@ -3395,6 +3416,17 @@
       const t = list.filter(notIndestructible(G)).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
       if (t) manualDestroy(G, 1 - pi, t.uid, by || '効果'); else log(G, '　破壊できる相手のイジンがいません');
     };
+    // 自分の戦場のイジン（またはカード）すべてを起こす
+    function untapAll(G, pi, what) {
+      const xs = G.players[pi].field.filter(x => x.tapped && (what === 'カード' || isIjinUp(x)));
+      xs.forEach(x => { x.tapped = false; });
+      log(G, `　効果：${nm(G, pi)}の戦場の${what === 'カード' ? 'カード' : 'イジン'}すべてを起こしました（${xs.length}枚）`);
+    }
+    function untapSelf(G, ctx) {
+      const x = ctx && ctx.inst;
+      if (!x) return false;
+      if (x.tapped) { x.tapped = false; log(G, `　効果：${cardOf(x).name}を起こしました`); } else log(G, `　${cardOf(x).name}はすでに起きています`);
+    }
     const EFFECT_RULES = [
       // 条件（満たさなければ以降を処理しない）
       { re: /^自分の戦場のイジンが(\d)体以下なら発動する$/, run: (G, pi, m) => G.players[pi].field.filter(isIjinUp).length <= Number(m[1]) },
@@ -3410,6 +3442,17 @@
       { re: /^(?:自分は)?イジン召喚権\+([1-3])して、自分の戦場のハイケイ1つにつき1ドローする$/, run: (G, pi, m) => {
         G.players[pi].summon += Number(m[1]); log(G, `　効果：${nm(G, pi)}のイジン召喚権+${m[1]}`);
         const n = G.players[pi].field.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').length; if (n) manualDraw(G, pi, n, '効果'); } },
+      // 起こす（選ぶものがないので、あなたのカードも自動で処理する）
+      { re: /^相手の戦場の色1つにつき、1ドローして、自分の戦場のイジンすべてを起こす$/, human: true, run: (G, pi) => {   // 岩倉具視
+        const n = fieldColors(G, 1 - pi);
+        if (n) manualDraw(G, pi, n, `効果（${nm(G, 1 - pi)}の戦場の色${n}つ）`); else log(G, `　効果：${nm(G, 1 - pi)}の戦場に色がないのでドローしません`);
+        untapAll(G, pi, 'イジン'); } },
+      { re: /^自分の戦場の(カード|イジン)すべてを起こす$/, human: true, run: (G, pi, m) => { untapAll(G, pi, m[1]); } },   // 出雲の阿国・藤原定家
+      { re: /^([1-3])ドローして、これを起こす$/, human: true, run: (G, pi, m, ctx) => { manualDraw(G, pi, Number(m[1]), '効果'); untapSelf(G, ctx); } },
+      { re: /^これを起こす$/, human: true, run: (G, pi, m, ctx) => { untapSelf(G, ctx); } },
+      { re: /^パワー(\d+)以上の間「アタッカーになったとき、これを起こす」を得る$/, human: true, run: (G, pi, m, ctx) => {   // シーボルト
+        if (!ctx.inst || powerOf(ctx.inst, G) < Number(m[1])) { log(G, `　パワーが${m[1]}未満なので起きません`); return false; }
+        untapSelf(G, ctx); } },
       // 山札・墓地・手札
       { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を、?裏のまま魔力ゾーンに置く$/, run: (G, pi, m) => {
         const P = G.players[pi]; for (let k = 0; k < KNUM[m[1]] && P.deck.length; k++) P.mana.push(mkInst(P.deck.pop(), { faceUp: false })); onFaceDownMana(G, pi);
@@ -3494,7 +3537,7 @@
         if (t) manualDestroy(G, pi, t.uid, '効果'); } },
     ];
     // 誘発の書き出し（「戦場に置かれたとき、」「航海 - アタッカーになったとき、」など）は、呼び出し側（どのタイミングで呼ばれたか）で判定済みなので外す
-    const TRIG_PREFIX = /^(?:[^\s、。-]{1,6} - )?(?:この能力は、?)?(?:これが)?(?:マリョク配置によって)?(?:(?:魔力ゾーン|戦場)に置かれた|アタッカーになった|ブロッカーになった|破壊された)とき(?:に発動する)?、|^(?:[^\s、。-]{1,6} - )?(?:ハイケイが戦場に置かれる(?:たび|とき)|相手の戦場のイジンが破壊されるたび|ガーディアンが自分の戦場に置かれるたび|マリョク配置によってカードが自分の魔力ゾーンに置かれたとき|自分のエンドフェイズが開始したとき)、/;
+    const TRIG_PREFIX = /^(?:[^\s、。-]{1,6} - )?(?:この能力は、?)?(?:これが)?(?:マリョク配置によって)?(?:(?:魔力ゾーン|戦場)に置かれた|アタッカーになった|ブロッカーになった|破壊された)とき(?:に発動する)?、|^(?:[^\s、。-]{1,6} - )?(?:ハイケイが戦場に置かれ(?:る(?:たび|とき)|たとき)|相手の戦場のイジンが破壊されるたび|ガーディアンが自分の戦場に置かれるたび|マリョク配置によってカードが自分の魔力ゾーンに置かれたとき|自分のエンドフェイズが開始したとき)、/;
     const TRIG_ONLY = /^(?:この能力は、?)?(?:これが)?(?:マリョク配置によって)?(?:魔力ゾーン|戦場)に置かれたときに発動する$/;   // 「この能力は、これが〜に置かれたときに発動する。」だけの文
     const TRIG_ONLY2 = /^[^、]*(?:とき|たび)に発動(?:する|できる)$/;   // 「赤のイジンが自分の戦場に置かれたときに発動できる。」など、条件だけの文
     const TRIG_ONLY3 = /^(?:[^ 　]+ - )?この能力は、[^。]*(?:とき|たび)に(?:戦場か墓地|戦場|魔力ゾーン|墓地)?で?発動(?:する|できる)$/;   // 「この能力は、ハイケイが…置かれたときに戦場で発動できる。」
@@ -3516,7 +3559,7 @@
     const HUMAN_SAFE = r => { if (r.human) return true; const s = r.re.source; return /ドロー|召喚権|配置権|なら(?:発動|、)/.test(s) && !/墓地|破壊|手札|山札の上から|相手は|するか|裏|戻|寝/.test(s); };
     function humanAutoPlan(G, card, text) {
       const t = manualPart(card, text) || '';
-      if (!t || !/ドロー/.test(t)) return null;
+      if (!t || !/ドロー|起こす/.test(t)) return null;
       const plan = effectPlan(t);
       return plan && plan.every(({ r }) => HUMAN_SAFE(r)) ? plan : null;
     }
@@ -3525,7 +3568,7 @@
       const plan = humanAutoPlan(G, card, text);
       if (!plan) return false;
       if (/発動できる/.test(text) && G.players[pi].deck.length <= 3) return false;   // 任意の能力で山札が少ないときは、自分で決める
-      log(G, `　${card.name}の能力を自動処理します（ドロー）`);
+      log(G, `　${card.name}の能力を自動処理します`);
       for (const { r, m } of plan) if (r.run(G, pi, m, ctx || {}) === false) { log(G, '　（条件を満たさないので、ここから先は発動しません）'); break; }
       return true;
     }
