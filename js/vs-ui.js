@@ -772,7 +772,11 @@
       adj.addEventListener('click', ev => openAdjustMenu(ev.currentTarget));
       const d = el('button', 'btn btn-ghost btn-sm', '🔍 カード詳細');
       d.addEventListener('click', () => openCardDetail(e.cardId));
-      const x = el('button', 'btn btn-ghost btn-sm', opt && !man ? '発動しない' : '閉じる');
+      // 閉じるボタンの表記：ボタンで処理したあと／任意で使わない／手動で処理した、を分ける
+      const usedAny = !!(e.used && e.used.size);
+      const x = el('button', 'btn btn-sm ' + (usedAny ? 'btn-primary' : 'btn-ghost'),
+        usedAny ? '✓ 処理済みにして閉じる' : (opt && !man ? '発動しない（閉じる）' : '手動で処理済み（閉じる）'));
+      x.title = usedAny ? 'この能力の処理を終えて、案内を閉じます' : (opt && !man ? '任意の能力なので、使わずに閉じます' : '手動調整などで処理を済ませたら閉じます');
       x.addEventListener('click', () => { VS.assist.splice(VS.assist.indexOf(e), 1); render(); });
       acts.append(adj, d, x);
       row.appendChild(acts);
