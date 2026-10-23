@@ -8,7 +8,7 @@
   if (typeof IjindenEngine === 'undefined') { console.error('vs-engine.js が読み込まれていません'); return; }
 
   const ENG = IjindenEngine.create(CARDS_BY_ID);
-  const VS = { G: null, mode: 'normal', selAtk: new Set(), selBlocker: null, assign: {}, busy: false, flashMsg: '', legacy: [], annaSel: new Set(), trig: null, afterAnna: null, annaPrev: 'normal', assist: [], assistTurn: 0, pumping: false };
+  const VS = { G: null, mode: 'normal', selAtk: new Set(), selBlocker: null, assign: {}, busy: false, flashMsg: '', legacy: [], annaSel: new Set(), trig: null, afterAnna: null, afterLegacy: null, annaPrev: 'normal', assist: [], assistTurn: 0, pumping: false };
   const $ = id => document.getElementById(id);
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -150,7 +150,7 @@
     VS.deckKeys = { my, cpu, sel };
     VS.G = ENG.newGame(getDeckByKey(my).cards, getDeckByKey(cpu).cards, first, [1], { mulligan: mullOn() });
     { const fb = document.getElementById('vsFeed'); if (fb) fb.innerHTML = ''; }   // 前の対戦の履歴を消す
-    VS.mode = 'normal'; VS.selAtk = new Set(); VS.selBlocker = null; VS.assign = {}; VS.busy = false; VS.flashMsg = ''; VS.legacy = []; VS.annaSel = new Set(); VS.trig = null; VS.afterAnna = null; VS.assist = []; VS.assistTurn = 0; fxCursor = 0;
+    VS.mode = 'normal'; VS.selAtk = new Set(); VS.selBlocker = null; VS.assign = {}; VS.busy = false; VS.flashMsg = ''; VS.legacy = []; VS.annaSel = new Set(); VS.trig = null; VS.afterAnna = null; VS.afterLegacy = null; VS.assist = []; VS.assistTurn = 0; fxCursor = 0;
     $('vsSetupPanel').style.display = 'none';
     $('vsBoard').style.display = 'block';
     if (fxShow('dive')) schedule(2200, () => showToast('ダイブトゥイジンデン！', { variant: 'dive', ms: 2200 }));
@@ -423,7 +423,9 @@
       VS.legacy = VS.legacy.concat(legacy);
       const wait = Math.max(0, fxCursor - Date.now());
       setTimeout(() => {
-        if (VS.G !== G || G.winner !== null || !VS.legacy.length) return;
+        if (VS.G !== G || G.winner !== null || !VS.legacy.length || VS.mode === 'legacy') return;
+        // ブロック指定の途中なら、遺業能力を処理したあとにブロック指定へ戻る（指定済みのブロッカーはそのまま）
+        if (VS.mode === 'block' && !VS.afterLegacy) VS.afterLegacy = () => { VS.mode = 'block'; render(); };
         VS.mode = 'legacy';
         render();
       }, wait);
@@ -434,6 +436,11 @@
   function finishLegacy() {
     VS.legacy = [];
     VS.mode = 'normal';
+    const G = VS.G, next = VS.afterLegacy;
+    VS.afterLegacy = null;
+    if (next) { next(); return; }
+    // CPUのアタック中（あなたのブロック待ち）なら、ブロック指定へ
+    if (G && G.winner === null && G.battle && G.current === 1 && !G.battle.declared) { enterBlockMode(); return; }
     render();
   }
 
@@ -1282,6 +1289,12 @@
   }
 
   function enterBlockMode() {
+    // 遺業能力の処理が残っているなら、先にそちらを済ませてからブロック指定へ
+    if (VS.legacy.length) {
+      VS.afterLegacy = () => enterBlockMode();
+      if (VS.mode !== 'legacy') { VS.mode = 'legacy'; render(); }
+      return;
+    }
     VS.mode = 'block';
     VS.assign = {};
     VS.selBlocker = null;
@@ -1330,6 +1343,7 @@
     render();
     const step = () => {
       if (VS.G !== G) { VS.busy = false; return; }          // 対戦終了済み
+      if (VS.legacy.length && VS.mode !== 'legacy' && fxWait() === 0 && G.winner === null) { VS.busy = false; VS.mode = 'legacy'; render(); VS.busy = true; }   // 遺業フェーズが表示されていなければ表示する（止まらないように）
       if (VS.legacy.length || VS.mode === 'legacy' || fxWait() > 0) { setTimeout(step, Math.max(250, fxWait() + 60)); return; }   // 演出・遺業フェーズが終わるまで待つ
       const r = ENG.cpuStep(G);
       if (r === 'continue') { render(); setTimeout(step, 700); return; }
