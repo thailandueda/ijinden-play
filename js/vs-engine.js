@@ -466,7 +466,7 @@
     }
 
     /* aiPlayers: CPUが操作するプレイヤー番号の配列（通常は [1]） */
-    /* opts.mulligan: 手札の引き直し（1回だけ。手札6枚をすべて山札に戻してシャッフルし、6枚引き直す。ガーディアンはそのまま） */
+    /* opts.mulligan: 手札の引き直し（先攻のプレイヤーだけ・1回だけ。手札6枚をすべて山札に戻してシャッフルし、6枚引き直す。ガーディアンはそのまま） */
     function newGame(deckDef0, deckDef1, firstIdx, aiPlayers, opts) {
       const G = {
         players: [newPlayer(deckDef0), newPlayer(deckDef1)],
@@ -480,6 +480,7 @@
       if (opts && opts.mulligan) {
         G.mulligan = {};
         [0, 1].forEach(pi => {
+          if (pi !== firstIdx) { G.mulligan[pi] = 'none'; return; }   // 手札の引き直しは先攻のプレイヤーだけ
           if (!G.aiPlayers.has(pi)) { G.mulligan[pi] = 'pending'; return; }
           G.mulligan[pi] = 'pending';
           mulligan(G, pi, cpuWantsMulligan(G, pi));
@@ -3430,6 +3431,7 @@
     const EFFECT_RULES = [
       // 条件（満たさなければ以降を処理しない）
       { re: /^自分の戦場のイジンが(\d)体以下なら発動する$/, run: (G, pi, m) => G.players[pi].field.filter(isIjinUp).length <= Number(m[1]) },
+      { re: /^自分の戦場に他のイジンがいないなら発動する$/, run: (G, pi, m, ctx) => !G.players[pi].field.some(x => isIjinUp(x) && x !== (ctx && ctx.inst)) },   // 北条氏康
       { re: /^戦場に(赤|青|緑|黄|紫)のイジンがいるなら発動する$/, run: (G, pi, m) => G.players.some(P => P.field.some(x => isIjinUp(x) && String(cardOf(x).color).includes(m[1]))) },
       // ドロー・権利
       { re: /^(?:自分は)?([1-3１-３一二三])ドローする$/, run: (G, pi, m) => { manualDraw(G, pi, KNUM[m[1]], '効果'); } },
@@ -3438,7 +3440,7 @@
       { re: /^マリョク配置権\+([1-3])する$/, run: (G, pi, m) => { G.players[pi].manaPlace += Number(m[1]); log(G, `　効果：${nm(G, pi)}のマリョク配置権+${m[1]}`); },
         ok: (G, pi) => G.players[pi].manaPlace < 1 && G.players[pi].hand.length >= 3 },
       { re: /^([1-3])ドローして、イジン召喚権\+([1-3])する$/, run: (G, pi, m) => { manualDraw(G, pi, Number(m[1]), '効果'); G.players[pi].summon += Number(m[2]); log(G, `　効果：${nm(G, pi)}のイジン召喚権+${m[2]}`); } },
-      { re: /^([1-3])ドローして、自分の手札([1-3])枚を墓地に置く$/, run: (G, pi, m) => { manualDraw(G, pi, Number(m[1]), '効果'); discardLowest(G, pi, Number(m[2])); } },
+      { re: /^([1-3])ドローして、自分の手札([1-3])枚を墓地に置く$/, pick: true, run: (G, pi, m) => { manualDraw(G, pi, Number(m[1]), '効果'); discardLowest(G, pi, Number(m[2])); } },
       { re: /^(?:自分は)?イジン召喚権\+([1-3])して、自分の戦場のハイケイ1つにつき1ドローする$/, run: (G, pi, m) => {
         G.players[pi].summon += Number(m[1]); log(G, `　効果：${nm(G, pi)}のイジン召喚権+${m[1]}`);
         const n = G.players[pi].field.filter(x => x.faceUp && cardOf(x).type === 'ハイケイ').length; if (n) manualDraw(G, pi, n, '効果'); } },
@@ -3457,12 +3459,12 @@
       { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を、?裏のまま魔力ゾーンに置く$/, run: (G, pi, m) => {
         const P = G.players[pi]; for (let k = 0; k < KNUM[m[1]] && P.deck.length; k++) P.mana.push(mkInst(P.deck.pop(), { faceUp: false })); onFaceDownMana(G, pi);
         log(G, `　効果：${nm(G, pi)}の山札の上から${KNUM[m[1]]}枚を裏のまま魔力ゾーンに置きました`); } },
-      { re: /^自分の山札の上から([1-9])枚を墓地に置く$/, run: (G, pi, m) => { millN(G, pi, Number(m[1])); } },
-      { re: /^自分の手札([1-3])枚を墓地に置く$/, run: (G, pi, m) => { discardLowest(G, pi, Number(m[1])); } },
+      { re: /^自分の山札の上から([1-9])枚を墓地に置く$/, optPick: true, run: (G, pi, m) => { millN(G, pi, Number(m[1])); } },
+      { re: /^自分の手札([1-3])枚を墓地に置く$/, pick: true, run: (G, pi, m) => { discardLowest(G, pi, Number(m[1])); } },
       // ガーディアン
       { re: /^自分の山札の上から(?:カード)?([1-3１-３一二三])(?:枚|つ)を(?:裏向きの)?ガーディアン(?:にして|として)戦場に置く$/, run: (G, pi, m) => {
         for (let k = 0; k < KNUM[m[1]]; k++) addGuardianFromDeck(G, pi); } },
-      { re: /^自分の戦場のガーディアン([1-3])体を山札の上に戻す$/, run: (G, pi, m) => {
+      { re: /^自分の戦場のガーディアン([1-3])体を山札の上に戻す$/, pick: true, run: (G, pi, m) => {
         const P = G.players[pi];
         for (let k = 0; k < Number(m[1]); k++) {
           const g = takeGuardian(G, pi); if (!g) break;
@@ -3470,20 +3472,20 @@
           log(G, `　${nm(G, pi)}のガーディアン1体を山札の上に戻しました（残りのガーディアン${myGuards(G, pi).length}体）`);
         } } },
       // マーブルオーブ「赤か黄の他のマリョクが自分の魔力ゾーンにないなら、自分の戦場のガーディアン1体を山札の上に戻す」
-      { re: /^(赤|青|緑|黄|紫)か(赤|青|緑|黄|紫)の他のマリョクが自分の魔力ゾーンにないなら、自分の戦場のガーディアン1体を山札の上に戻す$/, run: (G, pi, m, ctx) => {
+      { re: /^(赤|青|緑|黄|紫)か(赤|青|緑|黄|紫)の他のマリョクが自分の魔力ゾーンにないなら、自分の戦場のガーディアン1体を山札の上に戻す$/, pick: true, run: (G, pi, m, ctx) => {
         const P = G.players[pi];
         const has = P.mana.some(x => x !== ctx.inst && x.faceUp && cardOf(x).type === 'マリョク' && (String(cardOf(x).color).includes(m[1]) || String(cardOf(x).color).includes(m[2])));
         if (has) { log(G, `　${m[1]}か${m[2]}の他のマリョクがあるので、ガーディアンは戻しません`); return; }
         const g = takeGuardian(G, pi); if (!g) return;
         P.field.splice(P.field.indexOf(g), 1); P.deck.push(g.cardId);
         log(G, `　${nm(G, pi)}のガーディアン1体を山札の上に戻しました（残りのガーディアン${myGuards(G, pi).length}体）`); } },
-      { re: /^自分の墓地のカード1つをガーディアンにして戦場に置く$/, run: (G, pi) => {
+      { re: /^自分の墓地のカード1つをガーディアンにして戦場に置く$/, pick: true, run: (G, pi) => {
         const P = G.players[pi]; if (!P.grave.length) return;
         // 遺業能力を持つカード（破壊されたときに得をする）→ 価値の低いカードの順にガーディアンにする
         const g = P.grave.slice().sort((a, b) => (hasLegacy(cardOf(b)) ? 1 : 0) - (hasLegacy(cardOf(a)) ? 1 : 0) || cardValue(cardOf(a)) - cardValue(cardOf(b)))[0];
         P.grave.splice(P.grave.indexOf(g), 1); g.faceUp = false; g.isGuardian = true; g.tapped = false; g.placedTurn = G.turn; P.field.push(g);
         log(G, `　効果：${nm(G, pi)}の墓地のカード1つをガーディアンにして戦場に置きました`); onGuardianPlaced(G, pi); } },
-      { re: /^自分の戦場のガーディアン1体を墓地に置いて、自分の山札の上から1枚をガーディアンにして戦場に置く$/, run: (G, pi) => {
+      { re: /^自分の戦場のガーディアン1体を墓地に置いて、自分の山札の上から1枚をガーディアンにして戦場に置く$/, pick: true, run: (G, pi) => {
         const P = G.players[pi], g = takeGuardian(G, pi); if (!g) return;
         P.field.splice(P.field.indexOf(g), 1); g.faceUp = true; g.isGuardian = false; g.tapped = false; P.grave.push(g);
         log(G, `　効果：${nm(G, pi)}のガーディアン（${cardOf(g).name}）を墓地に置きました`); addGuardianFromDeck(G, pi); } },
@@ -3499,7 +3501,7 @@
       { re: /^相手の山札の上から(\d+)枚を墓地に置く$/, run: (G, pi, m) => { millN(G, 1 - pi, Number(m[1]), '効果'); } },
       // 第2弾
       { re: /^自分の魔力ゾーンのマリョクが(\d)つ以上なら発動できる$/, run: () => true },   // 決起の条件（呼び出し側で判定済み）
-      { re: /^([1-3])ドローするか、イジン召喚権\+([1-3])する$/, run: (G, pi, m) => {   // 出せるイジンが手札にあれば召喚権、なければドロー
+      { re: /^([1-3])ドローするか、イジン召喚権\+([1-3])する$/, pick: true, run: (G, pi, m) => {   // 出せるイジンが手札にあれば召喚権、なければドロー
         const P = G.players[pi];
         const can = P.hand.some(x => cardOf(x).type === 'イジン' && conditionProblems(P, cardOf(x), summonInfo(G, pi, cardOf(x)).auto).length === 0);
         if (can) { P.summon += Number(m[2]); log(G, `　効果：${nm(G, pi)}のイジン召喚権+${m[2]}`); } else manualDraw(G, pi, Number(m[1]), '効果'); } },
@@ -3518,20 +3520,20 @@
       { human: true, re: /^魔力ゾーンに裏のカードが(\d+)つ以上あるなら、([1-3])ドローする$/, run: (G, pi, m) => { if (G.players.reduce((t, Q) => t + Q.mana.filter(x => !x.faceUp).length, 0) >= Number(m[1])) manualDraw(G, pi, Number(m[2]), '効果'); else log(G, '　効果：条件を満たさないのでドローしません'); } },
       { re: /^自分のイジン召喚権1つにつき1ドローする$/, run: (G, pi) => { const n = G.players[pi].summon; if (n) manualDraw(G, pi, n, '効果'); } },
       // 相手のイジンを裏にして（持ち主の）魔力ゾーンへ（紫式部の執筆）：一番価値の高いもの
-      { re: /^相手の戦場のイジン1体を裏にして魔力ゾーンに置く$/, run: (G, pi) => {
+      { re: /^相手の戦場のイジン1体を裏にして魔力ゾーンに置く$/, pick: true, run: (G, pi) => {
         const O = G.players[1 - pi], t = O.field.filter(isIjinUp).sort((a, b) => instValue(G, b) - instValue(G, a))[0];
         if (!t) { log(G, '　対象になる相手のイジンがいません'); return; }
         O.field.splice(O.field.indexOf(t), 1); releaseEquips(G, 1 - pi, t); t.faceUp = false; t.tapped = false; t.isGuardian = false; O.mana.push(t);
         log(G, `　効果：${nm(G, 1 - pi)}の${cardOf(t).name}を裏にして魔力ゾーンに置きました`); } },
       // 破壊
-      { re: /^これのパワー以下のパワーを持つ相手の戦場のイジン1体を破壊する$/, run: (G, pi, m, ctx) => {
+      { re: /^これのパワー以下のパワーを持つ相手の戦場のイジン1体を破壊する$/, pick: true, run: (G, pi, m, ctx) => {
         const lim = ctx.inst ? powerOf(ctx.inst, G) : 0;
         destroyBest(G, pi, G.players[1 - pi].field.filter(x => isIjinUp(x) && powerOf(x, G) <= lim)); } },
-      { re: /^(?:相手の戦場のパワー(\d+)以下のイジン|パワー(\d+)以下の相手の戦場のイジン)1体を破壊する$/, run: (G, pi, m) => {
+      { re: /^(?:相手の戦場のパワー(\d+)以下のイジン|パワー(\d+)以下の相手の戦場のイジン)1体を破壊する$/, pick: true, run: (G, pi, m) => {
         destroyBest(G, pi, G.players[1 - pi].field.filter(x => isIjinUp(x) && powerOf(x, G) <= Number(m[1] || m[2]))); },
         ok: (G, pi, m) => G.players[1 - pi].field.some(x => isIjinUp(x) && powerOf(x, G) <= Number(m[1] || m[2]) && !isIndestructible(G, x)) },
       // 自分のイジン1体を破壊（ビスマルクなど）：価値の低いもの（遺業能力持ちを優先）
-      { re: /^自分の戦場のイジン1体を破壊する$/, run: (G, pi) => {
+      { re: /^自分の戦場のイジン1体を破壊する$/, pick: true, run: (G, pi) => {
         const t = G.players[pi].field.filter(isIjinUp).filter(notIndestructible(G))
           .sort((a, b) => (instValue(G, a) - (hasLegacy(cardOf(a)) ? 1500 : 0)) - (instValue(G, b) - (hasLegacy(cardOf(b)) ? 1500 : 0)))[0];
         if (t) manualDestroy(G, pi, t.uid, '効果'); } },
@@ -3541,7 +3543,9 @@
     const TRIG_ONLY = /^(?:この能力は、?)?(?:これが)?(?:マリョク配置によって)?(?:魔力ゾーン|戦場)に置かれたときに発動する$/;   // 「この能力は、これが〜に置かれたときに発動する。」だけの文
     const TRIG_ONLY2 = /^[^、]*(?:とき|たび)に発動(?:する|できる)$/;   // 「赤のイジンが自分の戦場に置かれたときに発動できる。」など、条件だけの文
     const TRIG_ONLY3 = /^(?:[^ 　]+ - )?この能力は、[^。]*(?:とき|たび)に(?:戦場か墓地|戦場|魔力ゾーン|墓地)?で?発動(?:する|できる)$/;   // 「この能力は、ハイケイが…置かれたときに戦場で発動できる。」
-    const effectSentences = text => normTxt(text).replace(/（[^）]*）/g, '').split(/[。\n]+/).map(s => s.trim().replace(TRIG_PREFIX, '')).filter(s => s && !TRIG_ONLY.test(s) && !TRIG_ONLY2.test(s) && !TRIG_ONLY3.test(s));
+    // 「この能力は、〇〇なら、これが戦場に置かれたときに発動する。」の条件（〇〇なら）は捨てずに「〇〇なら発動する」として残す
+    const COND_TRIG = /^(?:[^ 　]+ - )?この能力は、(.+?なら)、[^、。]*(?:とき|たび)に(?:戦場か墓地|戦場|魔力ゾーン|墓地)?で?発動(?:する|できる)$/;
+    const effectSentences = text => normTxt(text).replace(/（[^）]*）/g, '').split(/[。\n]+/).map(s => s.trim().replace(COND_TRIG, '$1発動する').replace(TRIG_PREFIX, '')).filter(s => s && !TRIG_ONLY.test(s) && !TRIG_ONLY2.test(s) && !TRIG_ONLY3.test(s));
     /* 能力テキストをCPUが自動処理できるか（できるなら、その文ごとの処理を返す） */
     function effectPlan(text) {
       const sents = effectSentences(text);
@@ -3556,16 +3560,22 @@
     }
     /* あなた（CPUでない側）のカードの効果のうち、選ぶものがない「ドロー」系（Nドロー・ハイケイ1つにつきドロー・召喚権／配置権+N、
        「〜なら発動する」の条件つき）は自動で処理する。コスト・手札の選択・相手が関わるものは手動のまま */
-    const HUMAN_SAFE = r => { if (r.human) return true; const s = r.re.source; return /ドロー|召喚権|配置権|なら(?:発動|、)/.test(s) && !/墓地|破壊|手札|山札の上から|相手は|するか|裏|戻|寝/.test(s); };
-    function humanAutoPlan(G, card, text) {
+    // あなたのカードで自動にしてよい効果：選ぶもの（対象・捨てるカード・どのガーディアンか・AかBか）がないもの。
+    // pick: 選ぶものがある → 手動のまま ／ optPick: 「発動できる」（任意）のときは使うかどうかを自分で決める（自分の山札を削るなど）
+    const HUMAN_SAFE = (r, optional) => !r.pick && !(optional && r.optPick);
+    // 置いたとき（戦場・魔力ゾーン）に、別のタイミングの誘発（破壊されたとき・〜したときに発動できる・〜たび）を処理しないための判定
+    const OTHER_TRIGGER = /(?:破壊された|アタッカーになった|ブロッカーになった|寝た)とき|たび、|ときに(?:戦場で|魔力ゾーンで)?発動(?:でき)?る/;
+    function humanAutoPlan(G, card, text, kind) {
       const t = manualPart(card, text) || '';
-      if (!t || !/ドロー|起こす/.test(t)) return null;
+      if (!t) return null;
+      if ((kind === 'field' || kind === 'mana') && OTHER_TRIGGER.test(normTxt(t).replace(/(?:これが)?(?:戦場|魔力ゾーン)に置かれたときに発動する/g, ''))) return null;
       const plan = effectPlan(t);
-      return plan && plan.every(({ r }) => HUMAN_SAFE(r)) ? plan : null;
+      const optional = /発動できる/.test(t);
+      return plan && plan.every(({ r }) => HUMAN_SAFE(r, optional)) ? plan : null;
     }
     function humanAuto(G, pi, card, text, ctx) {
       if (pillarOn(G) && ctx.kind !== 'mahou' && ctx.kind !== 'legacy') return false;
-      const plan = humanAutoPlan(G, card, text);
+      const plan = humanAutoPlan(G, card, text, ctx && ctx.kind);
       if (!plan) return false;
       if (/発動できる/.test(text) && G.players[pi].deck.length <= 3) return false;   // 任意の能力で山札が少ないときは、自分で決める
       log(G, `　${card.name}の能力を自動処理します`);
@@ -4088,7 +4098,7 @@
       playProblems, summonInfo, manaInfo, parseCard, kwOf, powerOf, attackPowerOf, blockPowerOf, canAct,
       manualMove, manualTap, manualFlip, manualDraw, manualMill, manualRights, manualGuardianFromDeck, manualDestroy, manualPower,
       arenaOn, triggerInfo, resolveAnna, resolvePending,
-      effectPlan, cpuChooseAttack, equipCandidates, mulligan, resolveDeferred, tonkoOptions, useTonko
+      effectPlan, cpuChooseAttack, equipCandidates, mulligan, resolveDeferred, tonkoOptions, useTonko, humanAutoPlan
     };
     // 待機中のCPUの能力は、あなたが次の行動（配置・召喚・攻撃・ターン終了など）をする前に処理する
     ['endTurn', 'placeMana', 'summon', 'useHaikei', 'useMahou', 'declareAttack'].forEach(k => { const f = API[k]; API[k] = function (G) { if (G && G.deferredTrig && G.deferredTrig.length) resolveDeferred(G); return f.apply(null, arguments); }; });

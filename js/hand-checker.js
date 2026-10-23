@@ -46,8 +46,8 @@
     };
     const mana = [], field = [];
     const seenKey = keyNames.map(n => hand.some(id => CARDS_BY_ID[id].name === n));
-    out.openKeys = seenKey.slice();
-    out.handMaryoku = hand.filter(isMaryoku).length;   // 引き直したあとの初手のマリョク枚数   // 初手（引き直したあとの6枚）にあるか
+    out.openKeys = seenKey.slice();   // 初手（引き直したあとの6枚）にあるか
+    out.handMaryoku = hand.filter(isMaryoku).length;   // 引き直したあとの初手のマリョク枚数
     let summoned = 0;
     for (let t = 1; t <= TURNS; t++) {
       if (!(first && t === 1) && deck.length) hand.push(deck.pop());
@@ -109,7 +109,8 @@
     const avgIjin = res.reduce((s, r) => s + r.openIjin, 0) / N;
     const mulRate = pct(res.filter(r => r.mulled).length, N);
     const nMar = opts.list.filter(id => CARDS_BY_ID[id].type === 'マリョク').length;
-    let h = `<div class="hc-summary">${N.toLocaleString()}回シャッフルした結果（${opts.first ? '先攻' : '後攻'}・デッキ${opts.list.length}枚・うちマリョク${nMar}枚${opts.mull ? `・マリョク0枚なら引き直し（${mulRate}%で引き直し）` : ''}）</div>`;
+    let h = `<div class="hc-summary">${N.toLocaleString()}回シャッフルした結果（${opts.first ? '先攻' : '後攻'}・デッキ${opts.list.length}枚・うちマリョク${nMar}枚${opts.mull ? `・マリョク0枚なら引き直し（${mulRate}%で引き直し）` : ''}）</div>`
+      + (!opts.first && $('hcMull').checked ? '<p class="hc-note">※ 手札の引き直しは先攻だけなので、後攻では引き直しなしで数えています。</p>' : '');
     h += '<h3 class="hc-h">初手6枚のマリョク枚数</h3><table class="vs-stats-table hc-table"><tr><th>枚数</th><th>確率</th></tr>';
     counts.forEach((c, k) => { if (k <= 5 || c) h += `<tr><td class="vs-stats-name">${k}枚${k === 0 ? '（事故）' : ''}</td>${cell(pct(c, N))}</tr>`; });
     h += `</table><p class="hc-note">初手のイジンは平均${avgIjin.toFixed(1)}枚。マリョク0枚の初手は${pct(counts[0], N)}%です。${opts.mull ? `引き直したあとも0枚のままになるのは${pct(res.filter(r => r.handMaryoku === 0).length, N)}%です。` : ''}</p>`;
@@ -158,7 +159,7 @@
     const list = deckList();
     if (!list || list.length < 10) { $('hcResult').innerHTML = '<p class="hc-note">デッキを選んでください（10枚以上）。</p>'; return; }
     const first = $('fFirst').querySelector('.is-active') ? $('fFirst').querySelector('.is-active').dataset.val === 'first' : true;
-    const mull = $('hcMull').checked;
+    const mull = $('hcMull').checked && first;   // 手札の引き直しは先攻のプレイヤーだけ
     const keys = ['hcKey1', 'hcKey2', 'hcKey3'].map(k => $(k).value).filter(Boolean);
     const N = Number($('hcTrials').value) || 3000;
     $('hcResult').innerHTML = '<p class="hc-note">計算中…</p>';
