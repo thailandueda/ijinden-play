@@ -141,7 +141,8 @@
     });
   });
   // 種類ごとに表示するか。key では能力の自動処理・効果によるドローを出さない
-  const KEY_FX = new Set(['dive', 'turn', 'attack', 'destroy', 'nodestroy', 'legacy', 'win']);
+  // 中央に出すのは「ダイブ」「俺のターン」「対戦終了」だけ。ほかは左下の表示へ（重要だけ：バトル・破壊・遺業・CPUのターン開始は左下に出す）
+  const KEY_FX = new Set(['dive', 'turn', 'cputurn', 'attack', 'destroy', 'nodestroy', 'legacy', 'win']);
   const fxShow = kind => { const lv = fxLevel(); return lv === 'all' || kind === 'win' || (lv === 'key' && KEY_FX.has(kind)); };
   /* 対戦を始める（再戦でも使う）。sel: 'first' | 'second' | 'random' */
   function startMatch(my, cpu, sel) {
@@ -164,7 +165,7 @@
     if (!r.ok) { flash(r.msg); return; }
     // あなたが先攻なら、このあとCPU（後攻）が決める
     const cpuNote = G.firstIdx === 0 && G.mulligan[1] !== 'pending' ? (G.mulligan[1] === 'done' ? 'CPU（後攻）は手札を引き直しました' : 'CPU（後攻）は手札をそのまま使います') : undefined;
-    showToast(redo ? '手札を引き直しました' : 'この手札で始めます', { variant: 'long', sub: cpuNote, ms: cpuNote ? 2000 : 1400 });
+    pushFeed({ pi: 0, title: redo ? '手札を引き直しました' : 'この手札で始めます', lines: cpuNote ? [cpuNote] : [] });
     VS.mode = 'normal';
     render();
     if (G.current === 1) runCpu();
@@ -373,15 +374,16 @@
     };
     function showOne(f) {
       if (f.type === 'draw') {
-        if (!fxShow(f.turn ? 'turn' : 'draw')) return;
         const mine = f.pi === 0;
+        if (!fxShow(f.turn ? (mine ? 'turn' : 'cputurn') : 'draw')) return;
         if (!f.turn) {   // 効果によるドロー：左下の履歴へ
           feed({ pi: f.pi, title: (mine ? 'ドロー！' : 'CPUドロー') + (f.n > 1 ? ` ×${f.n}` : ''), lines: mine && f.names && f.names.length ? ['引いたカード：' + f.names.join('、')] : [] });
           return;
         }
-        // ターン開始のドローは、ターンが変わった合図として中央に出す
-        const text = (mine ? '俺のターン、ドロー！' : 'CPUのターン、ドロー！') + (f.n > 1 ? ` ×${f.n}` : '');
-        const sub = mine && f.names && f.names.length ? '引いたカード：' + f.names.join('、') : undefined;   // 自分が引いたカード名
+        // CPUのターン開始は左下へ。あなたのターン開始は、手番が来た合図として中央に出す
+        if (!mine) { feed({ pi: 1, title: 'CPUのターン、ドロー！' + (f.n > 1 ? ` ×${f.n}` : ''), tag: 'ターン開始' }); return; }
+        const text = '俺のターン、ドロー！' + (f.n > 1 ? ` ×${f.n}` : '');
+        const sub = f.names && f.names.length ? '引いたカード：' + f.names.join('、') : undefined;   // 自分が引いたカード名
         schedule(sub ? 1700 : 1300, () => showToast(text, { variant: mine ? 'me' : 'cpu', sub, ms: sub ? 1700 : 1300 }));
       } else if (f.type === 'ability') {
         if (!fxShow('ability')) return;
@@ -396,15 +398,13 @@
         showOne(f);
       } else if (f.type === 'attack') {
         if (!fxShow('attack')) return;
-        const text = `バトル！${f.pi === 0 ? '' : 'CPUの'}${f.names.join('・')}で攻撃！`;
-        schedule(1800, () => showToast(text, { variant: 'long', ms: 1800 }));
+        feed({ pi: f.pi, title: `バトル！${f.pi === 0 ? 'あなた' : 'CPU'}のアタック`, tag: 'バトル', lines: [f.names.join('・') + 'で攻撃'] });
       } else if (f.type === 'destroy') {
         if (!fxShow('destroy')) return;
-        const text = `${f.manual ? '' : 'バトルの結果、'}${whose(f.pi)}${f.items.map(x => x.name).join('、')}は破壊されて墓地へ`;
-        schedule(2200, () => showToast(text, { variant: 'long', ms: 2200 }));
+        feed({ pi: f.pi, title: `${whose(f.pi)}カードが破壊されました`, tag: f.manual ? '破壊' : 'バトルの結果', lines: [f.items.map(x => x.name).join('、') + ' → 墓地へ'] });
       } else if (f.type === 'nodestroy') {
         if (!fxShow('nodestroy')) return;
-        schedule(1600, () => showToast('バトルの結果、破壊されたカードはありません', { variant: 'long', ms: 1600 }));
+        feed({ pi: G.current, title: 'バトルの結果', tag: 'バトル', lines: ['破壊されたカードはありません'] });
       } else if (f.type === 'ability') {
         // 手動で処理する能力：効果アシストのバナーに出す（演出レベルに関係なく必ず）
         showOne(f);
@@ -414,7 +414,7 @@
         schedule(3600, () => showToast(`対戦終了！${who}の勝利！`, { variant: 'long', sub: f.reason, ms: 3600 }));
       } else if (f.type === 'legacy') {
         if (G.winner !== null) return;   // 決着がついたら遺業能力は処理しない
-        if (fxShow('legacy')) schedule(1700, () => showToast(`遺業能力発動！ ${whose(f.pi)}${f.name}`, { variant: 'legacy', ms: 1700 }));
+        if (fxShow('legacy')) feed({ pi: f.pi, title: `遺業能力発動！ ${whose(f.pi)}${f.name}`, tag: '遺業', cardId: f.cardId });
         legacy.push(f);
       }
     });
@@ -685,7 +685,7 @@
     actLockUntil = now + 700;
     fn(ev.currentTarget);
   };
-  const doneToast = (name, label) => showToast(`効果処理：${label}`, { variant: 'long', sub: name, ms: 1500 });
+  const doneToast = (name, label) => pushFeed({ pi: 0, title: `効果処理：${label}`, tag: '処理済み', lines: [name] });
 
   function buildAssist(b) {
     const G = VS.G;
