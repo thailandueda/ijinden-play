@@ -466,7 +466,7 @@
     }
 
     /* aiPlayers: CPUが操作するプレイヤー番号の配列（通常は [1]） */
-    /* opts.mulligan: 手札の引き直し（先攻のプレイヤーだけ・1回だけ。手札6枚をすべて山札に戻してシャッフルし、6枚引き直す。ガーディアンはそのまま） */
+    /* opts.mulligan: 手札の引き直し（先攻・後攻どちらも1回だけ。先攻のプレイヤーから順に決める。手札6枚をすべて山札に戻してシャッフルし、6枚引き直す。ガーディアンはそのまま） */
     function newGame(deckDef0, deckDef1, firstIdx, aiPlayers, opts) {
       const G = {
         players: [newPlayer(deckDef0), newPlayer(deckDef1)],
@@ -478,13 +478,8 @@
       };
       log(G, `対戦開始（${nm(G, firstIdx)}の先攻）。手札6枚・ガーディアン4枚を準備しました`);
       if (opts && opts.mulligan) {
-        G.mulligan = {};
-        [0, 1].forEach(pi => {
-          if (pi !== firstIdx) { G.mulligan[pi] = 'none'; return; }   // 手札の引き直しは先攻のプレイヤーだけ
-          if (!G.aiPlayers.has(pi)) { G.mulligan[pi] = 'pending'; return; }
-          G.mulligan[pi] = 'pending';
-          mulligan(G, pi, cpuWantsMulligan(G, pi));
-        });
+        G.mulligan = { 0: 'pending', 1: 'pending' };
+        advanceMulligan(G);
       }
       beginTurn(G);
       return G;
@@ -494,16 +489,27 @@
       const H = G.players[pi].hand.map(cardOf);
       return !H.some(c => c.type === 'マリョク') || !H.some(c => (c.type === 'イジン' || c.type === 'ハイケイ') && (c.level || 0) <= 3);
     }
-    function mulligan(G, pi, redo) {
+    // 先攻のプレイヤーから順に、引き直すかを決める（CPUは自動。あなたの番が来たら止まって、あなたが決めるのを待つ）
+    function advanceMulligan(G) {
+      for (const pi of [G.firstIdx, 1 - G.firstIdx]) {
+        if (G.mulligan[pi] !== 'pending') continue;
+        if (!G.aiPlayers.has(pi)) return;
+        mulligan(G, pi, cpuWantsMulligan(G, pi), true);
+      }
+    }
+    function mulligan(G, pi, redo, auto) {
       if (!G.mulligan || G.mulligan[pi] !== 'pending') return fail('手札の引き直しはできません');
+      const before = [G.firstIdx, 1 - G.firstIdx].slice(0, [G.firstIdx, 1 - G.firstIdx].indexOf(pi));
+      if (before.some(q => G.mulligan[q] === 'pending')) return fail('先攻のプレイヤーが先に決めます');
       const P = G.players[pi];
       G.mulligan[pi] = redo ? 'done' : 'kept';
-      if (!redo) { log(G, `${nm(G, pi)}：手札をそのまま使います`); return { ok: true }; }
+      if (!redo) { log(G, `${nm(G, pi)}：手札をそのまま使います`); if (!auto) advanceMulligan(G); return { ok: true }; }
       const n = P.hand.length;
       P.hand.splice(0).forEach(x => P.deck.push(x.cardId));
       shuffle(P.deck);
       for (let i = 0; i < n && P.deck.length; i++) P.hand.push(mkInst(P.deck.pop()));
       log(G, `${nm(G, pi)}：手札を引き直しました（${n}枚を山札に戻してシャッフルし、${n}枚引き直し）`);
+      if (!auto) advanceMulligan(G);
       return { ok: true };
     }
 

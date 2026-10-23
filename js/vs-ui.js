@@ -161,7 +161,9 @@
     const G = VS.G;
     const r = ENG.mulligan(G, 0, redo);
     if (!r.ok) { flash(r.msg); return; }
-    showToast(redo ? '手札を引き直しました' : 'この手札で始めます', { variant: 'long', ms: 1400 });
+    // あなたが先攻なら、このあとCPU（後攻）が決める
+    const cpuNote = G.firstIdx === 0 && G.mulligan[1] !== 'pending' ? (G.mulligan[1] === 'done' ? 'CPU（後攻）は手札を引き直しました' : 'CPU（後攻）は手札をそのまま使います') : undefined;
+    showToast(redo ? '手札を引き直しました' : 'この手札で始めます', { variant: 'long', sub: cpuNote, ms: cpuNote ? 2000 : 1400 });
     VS.mode = 'normal';
     render();
     if (G.current === 1) runCpu();
@@ -648,7 +650,8 @@
       lines.push(G.winReason);
     } else if (VS.mode === 'mulligan') {
       lines.push('🃏 手札の引き直し：今の手札6枚で始めるか、1回だけ引き直すかを選んでください（引き直すと手札6枚を山札に戻してシャッフルし、6枚引きます。ガーディアンはそのまま）。');
-      if (G.mulligan && G.mulligan[1] === 'done') lines.push('CPUは手札を引き直しました。');
+      if (G.firstIdx === 1 && G.mulligan) lines.push(G.mulligan[1] === 'done' ? 'CPU（先攻）は手札を引き直しました。次はあなたが決めます。' : 'CPU（先攻）は手札をそのまま使います。次はあなたが決めます。');
+      else lines.push('先攻のあなたが先に決めます。そのあとCPU（後攻）が決めます。');
     } else if (VS.mode === 'legacy') {
       lines.push('🕯 遺業フェーズ：能力を処理して「処理済み」を押してください。');
     } else if (VS.mode === 'anna' && VS.trig) {
