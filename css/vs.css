@@ -248,3 +248,8 @@
 @media (max-width: 600px){ .vs-status{ white-space:normal; } }
 .vs-feed-close{ margin-left:auto; background:none; border:none; color:#bba98c; font-size:15px; line-height:1; cursor:pointer; padding:0 2px; }
 .vs-feed-close:hover{ color: var(--gold-bright); }
+/* エンドフェイズの選択（蒸気機関車など） */
+.ep-list{ display:flex; flex-direction:column; gap:4px; margin:6px 0; }
+.ep-item{ display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 8px; border-radius:6px; background: rgba(0,0,0,.25); }
+.ep-item input{ width:18px; height:18px; accent-color: var(--gold-bright); }
+.ep-item .btn{ margin-left:auto; }

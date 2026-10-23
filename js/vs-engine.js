@@ -1059,6 +1059,62 @@
       return { ok: true };
     }
 
+    /* ---------- エンドフェイズの選択（あなた用）：ターン終了の前に確認画面で選ぶ ----------
+       蒸気機関車「自分のエンドフェイズが開始したときに発動できる。自分の山札の上から2枚を見て、ハイケイをすきなだけ戦場に置く。残りを手札に加える」
+       三層の舎利殿「自分のエンドフェイズが開始したとき、自分の山札の上から1枚を見る」「自分のエンドフェイズが開始したときに発動できる。このハイケイを破壊して、自分の山札をシャッフルする」 */
+    const STEAM_RE = /自分のエンドフェイズが開始したときに発動できる。自分の山札の上から(\d)枚を見て、ハイケイをすきなだけ戦場に置く。残りを手札に加える/;
+    const SANSO_RE = /自分のエンドフェイズが開始したとき、自分の山札の上から1枚を見る/;
+    function endPhaseChoices(G, pi) {
+      if (pillarOn(G) || G.current !== pi) return [];
+      const out = [];
+      G.players[pi].field.forEach(x => {
+        if (!x.faceUp || x.silenced) return;
+        const t = normTxt(cardOf(x).rule_text);
+        const m = t.match(STEAM_RE);
+        if (m) out.push({ uid: x.uid, name: cardOf(x).name, cardId: x.cardId, key: 'steam', n: Number(m[1]) });
+        else if (SANSO_RE.test(t)) out.push({ uid: x.uid, name: cardOf(x).name, cardId: x.cardId, key: 'sanso', n: 1 });
+      });
+      return out;
+    }
+    // 山札の上からn枚（見るだけ。山札は動かさない）。[{ cardId, name, type }]（一番上が先頭）
+    function peekTop(G, pi, n) {
+      const D = G.players[pi].deck;
+      return D.slice(Math.max(0, D.length - n)).reverse().map(id => ({ cardId: id, name: cardsById[id].name, type: cardsById[id].type }));
+    }
+    // 蒸気機関車：place[i] が true の i 枚目（ハイケイだけ）を戦場に、残りを手札に
+    function resolveSteam(G, pi, uid, place) {
+      const P = G.players[pi], src = P.field.find(x => x.uid === uid);
+      const ch = endPhaseChoices(G, pi).find(o => o.uid === uid && o.key === 'steam');
+      if (!src || !ch) return fail('今は発動できません');
+      const m0 = G.fx.length, top = [];
+      for (let k = 0; k < ch.n && P.deck.length; k++) top.push(mkInst(P.deck.pop()));
+      log(G, `${nm(G, pi)}：${ch.name}の能力（エンドフェイズ）：山札の上から${top.length}枚を見ました`);
+      const toHand = [];
+      top.forEach((x, i) => {
+        if (place && place[i] && cardOf(x).type === 'ハイケイ') placeToField(G, pi, x, ch.name);
+        else { P.hand.push(x); toHand.push(cardOf(x).name); }
+      });
+      if (toHand.length) log(G, `　${ch.name}：${toHand.join('、')}を手札に加えました`);
+      fxAt(G, m0, { type: 'ability', pi, kind: 'endPhase', cardId: src.cardId, name: ch.name, text: '山札の上から見て、ハイケイを戦場に・残りを手札に', uid, auto: true });
+      syncSilence(G);
+      return { ok: true };
+    }
+    // 三層の舎利殿：destroy なら、このハイケイを破壊して山札をシャッフル
+    function resolveSanso(G, pi, uid, destroy) {
+      const P = G.players[pi];
+      const ch = endPhaseChoices(G, pi).find(o => o.uid === uid && o.key === 'sanso');
+      if (!ch) return fail('今は発動できません');
+      const top = peekTop(G, pi, 1)[0];
+      log(G, `${nm(G, pi)}：${ch.name}の能力（エンドフェイズ）：山札の上から1枚を見ました${top ? '' : '（山札がありません）'}`);
+      if (destroy) {
+        const r = manualDestroy(G, pi, uid, ch.name);
+        if (!r.ok) return r;
+        shuffle(P.deck);
+        log(G, `　${ch.name}を破壊して、${nm(G, pi)}の山札をシャッフルしました`);
+      }
+      return { ok: true };
+    }
+
     /* ---------- 遁甲式（あなた用）：相手のターンのブロックステップ開始時に、魔力ゾーンで裏の遁甲カードを表にして発動 ---------- */
     const TONKO_RULES = [
       { key: 'ban', re: /これが魔力ゾーンに裏で置かれているなら、これを表にして、アタッカー1体を指定して発動できる。そのアタッカーをアタッカーでない状態にする/, needAttacker: true, label: 'アタッカー1体をアタッカーでない状態にする' },
@@ -4126,7 +4182,7 @@
       playProblems, summonInfo, manaInfo, parseCard, kwOf, powerOf, attackPowerOf, blockPowerOf, canAct,
       manualMove, manualTap, manualFlip, manualDraw, manualMill, manualRights, manualGuardianFromDeck, manualDestroy, manualPower,
       arenaOn, triggerInfo, resolveAnna, resolvePending,
-      effectPlan, cpuChooseAttack, equipCandidates, mulligan, resolveDeferred, tonkoOptions, useTonko, humanAutoPlan
+      effectPlan, cpuChooseAttack, equipCandidates, mulligan, resolveDeferred, tonkoOptions, useTonko, humanAutoPlan, endPhaseChoices, peekTop, resolveSteam, resolveSanso
     };
     // 待機中のCPUの能力は、あなたが次の行動（配置・召喚・攻撃・ターン終了など）をする前に処理する
     ['endTurn', 'placeMana', 'summon', 'useHaikei', 'useMahou', 'declareAttack'].forEach(k => { const f = API[k]; API[k] = function (G) { if (G && G.deferredTrig && G.deferredTrig.length) resolveDeferred(G); return f.apply(null, arguments); }; });

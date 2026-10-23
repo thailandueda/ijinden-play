@@ -151,7 +151,7 @@
     VS.deckKeys = { my, cpu, sel };
     VS.G = ENG.newGame(getDeckByKey(my).cards, getDeckByKey(cpu).cards, first, [1], { mulligan: mullOn() });
     { const fb = document.getElementById('vsFeed'); if (fb) fb.innerHTML = ''; }   // 前の対戦の履歴を消す
-    VS.mode = 'normal'; VS.selAtk = new Set(); VS.selBlocker = null; VS.assign = {}; VS.busy = false; VS.flashMsg = ''; VS.legacy = []; VS.annaSel = new Set(); VS.trig = null; VS.afterAnna = null; VS.afterLegacy = null; VS.assist = []; VS.assistTurn = 0; fxCursor = 0;
+    VS.mode = 'normal'; VS.selAtk = new Set(); VS.selBlocker = null; VS.assign = {}; VS.busy = false; VS.flashMsg = ''; VS.legacy = []; VS.annaSel = new Set(); VS.trig = null; VS.afterAnna = null; VS.afterLegacy = null; VS.endPhase = null; VS.assist = []; VS.assistTurn = 0; fxCursor = 0;
     $('vsSetupPanel').style.display = 'none';
     $('vsBoard').style.display = 'block';
     if (fxShow('dive')) schedule(2200, () => showToast('ダイブトゥイジンデン！', { variant: 'dive', ms: 2200 }));
@@ -500,6 +500,10 @@
     } else if (VS.mode === 'attack') {
       btn(`アタック確定（${VS.selAtk.size}体）`, 'btn-primary', confirmAttack, VS.selAtk.size === 0);
       btn('キャンセル', 'btn-ghost', () => { VS.mode = 'normal'; VS.selAtk = new Set(); render(); });
+    } else if (VS.mode === 'endphase' && VS.endPhase) {
+      const rows = VS.endPhase.rows;
+      btn('ターンを終える', 'btn-primary', () => { VS.mode = 'normal'; VS.endPhase = null; doEndTurn(); }, rows.some(r => !r.done));
+      btn('メインフェイズに戻る', 'btn-ghost', () => { VS.mode = 'normal'; VS.endPhase = null; render(); }, rows.some(r => r.peek));
     } else if (VS.mode === 'mulligan') {
       btn('この手札で始める', 'btn-primary', () => decideMulligan(false));
       btn('手札を引き直す（1回だけ）', 'btn-ghost', () => decideMulligan(true));
@@ -544,6 +548,7 @@
     if (VS.flashMsg) return { text: '⚠ ' + VS.flashMsg, warn: true };
     if (G.winner !== null) return { text: G.winner === 0 ? '🎉 あなたの勝利！' : 'CPUの勝利…' };
     if (VS.mode === 'mulligan') return { text: '🃏 手札を引き直すか決めてください' };
+    if (VS.mode === 'endphase' && VS.endPhase) { const left = VS.endPhase.rows.filter(r => !r.done).map(r => r.name); return left.length ? { text: `🌙 エンドフェイズ：${left.join('・')}の能力を処理してください` } : { text: '🌙 エンドフェイズ：処理が終わりました →「ターンを終える」' }; }
     if (VS.mode === 'legacy') return { text: `🕯 遺業能力を処理してください（${VS.legacy.length}件）` };
     if (VS.mode === 'anna' && VS.trig) { const i = ENG.triggerInfo(G, VS.trig); return { text: `アンナ・パブロワ：手札に戻すイジンを選択（${VS.annaSel.size}/${i.max}）` }; }
     if (VS.mode === 'attack') return { text: `⚔ アタッカーを選んで「アタック確定」（選択 ${VS.selAtk.size}体）` };
@@ -687,6 +692,62 @@
   };
   const doneToast = (name, label) => pushFeed({ pi: 0, title: `効果処理：${label}`, tag: '処理済み', lines: [name] });
 
+  /* エンドフェイズの選択（蒸気機関車・三層の舎利殿） */
+  function buildEndPhase(b) {
+    const G = VS.G;
+    VS.endPhase.rows.forEach(r => {
+      const row = el('div', 'vs-legacy-row vs-assist-row');
+      row.appendChild(el('div', 'vs-legacy-name', `${r.done ? '✓' : '🌙'} あなたの${r.name}の能力（エンドフェイズ）`));
+      const text = String(CARDS_BY_ID[r.cardId].rule_text || '').split(/\n\s*\n/).map(p => p.replace(/\s*\n\s*/g, '')).filter(p => /エンドフェイズが開始したとき/.test(p)).join('\n');
+      row.appendChild(el('div', 'vs-legacy-text', text));
+      const acts = el('div', 'vs-banner-actions');
+      const add = (label, cls, fn) => { const bt = el('button', 'btn btn-sm ' + cls, label); bt.addEventListener('click', fn); acts.appendChild(bt); return bt; };
+      if (r.done) {
+        row.appendChild(el('div', 'vs-legacy-text', r.result));
+      } else if (!r.peek) {
+        if (r.key === 'steam') {
+          add(`発動する（山札の上から${r.n}枚を見る）`, 'btn-primary', () => { r.peek = ENG.peekTop(G, 0, r.n); r.place = r.peek.map(c => c.type === 'ハイケイ'); render(); });
+          add('使わない', 'btn-ghost', () => { r.done = true; r.result = '使いませんでした'; ENG.addLog(G, `あなた：${r.name}の能力は使いませんでした`); render(); });
+        } else {
+          add('山札の上から1枚を見る', 'btn-primary', () => { r.peek = ENG.peekTop(G, 0, 1); render(); });
+        }
+      } else if (r.key === 'steam') {
+        if (!r.peek.length) row.appendChild(el('div', 'vs-legacy-text', '山札がありません'));
+        const list = el('div', 'ep-list');
+        r.peek.forEach((c, i) => {
+          const it = el('label', 'ep-item');
+          if (c.type === 'ハイケイ') {
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!r.place[i];
+            cb.addEventListener('change', () => { r.place[i] = cb.checked; render(); });
+            it.appendChild(cb);
+            it.appendChild(el('span', '', `${i + 1}枚目：${c.name}（ハイケイ）→ ${r.place[i] ? '戦場に置く' : '手札に加える'}`));
+          } else it.appendChild(el('span', '', `${i + 1}枚目：${c.name}（${c.type}）→ 手札に加える`));
+          const d = el('button', 'btn btn-ghost btn-sm', '🔍'); d.title = 'カード詳細'; d.addEventListener('click', ev => { ev.preventDefault(); openCardDetail(c.cardId); });
+          it.appendChild(d);
+          list.appendChild(it);
+        });
+        row.appendChild(list);
+        add('決定', 'btn-primary', guarded(() => {
+          const res = ENG.resolveSteam(G, 0, r.uid, r.place);
+          if (!res.ok) { flash(res.msg); return; }
+          const placed = r.peek.filter((c, i) => r.place[i] && c.type === 'ハイケイ').map(c => c.name), hand = r.peek.filter((c, i) => !(r.place[i] && c.type === 'ハイケイ')).map(c => c.name);
+          r.done = true; r.result = `戦場に置いた：${placed.join('、') || 'なし'}　／　手札に加えた：${hand.join('、') || 'なし'}`;
+          render();
+        }));
+      } else {
+        row.appendChild(el('div', 'vs-legacy-text', r.peek.length ? `山札の上の1枚：${r.peek[0].name}（${r.peek[0].type}）` : '山札がありません'));
+        if (r.peek.length) { const d = add('🔍 カード詳細', 'btn-ghost', () => openCardDetail(r.peek[0].cardId)); d.dataset.vsmenu = '1'; }
+        add('このハイケイを破壊して山札をシャッフル', 'btn-primary', guarded(() => {
+          const res = ENG.resolveSanso(G, 0, r.uid, true); if (!res.ok) { flash(res.msg); return; }
+          r.done = true; r.result = '破壊して山札をシャッフルしました'; render();
+        }));
+        add('破壊しない', 'btn-ghost', () => { ENG.resolveSanso(G, 0, r.uid, false); r.done = true; r.result = '山札の上の1枚を見ました（破壊しない）'; render(); });
+      }
+      if (!r.done) { const d = el('button', 'btn btn-ghost btn-sm', '🔍 カード詳細'); d.addEventListener('click', () => openCardDetail(r.cardId)); acts.appendChild(d); }
+      row.appendChild(acts);
+      b.appendChild(row);
+    });
+  }
   function buildAssist(b) {
     const G = VS.G;
     VS.assist.forEach(e => {
@@ -727,6 +788,8 @@
       b.classList.add(G.winner === 0 ? 'is-win' : 'is-lose');
       lines.push(G.winner === 0 ? '🎉 あなたの勝利！' : 'CPUの勝利…');
       lines.push(G.winReason);
+    } else if (VS.mode === 'endphase') {
+      lines.push('🌙 エンドフェイズ：ターンを終える前に、下の能力を処理できます。処理し終えたら上の「ターンを終える」。');
     } else if (VS.mode === 'mulligan') {
       lines.push('🃏 手札の引き直し：今の手札6枚で始めるか、1回だけ引き直すかを選んでください（引き直すと手札6枚を山札に戻してシャッフルし、6枚引きます。ガーディアンはそのまま）。');
       if (G.firstIdx === 1 && G.mulligan) lines.push(G.mulligan[1] === 'done' ? 'CPU（先攻）は手札を引き直しました。次はあなたが決めます。' : 'CPU（先攻）は手札をそのまま使います。次はあなたが決めます。');
@@ -784,6 +847,7 @@
       b.appendChild(row);
     }
     if (G.winner === null && VS.assist.length) buildAssist(b);
+    if (G.winner === null && VS.mode === 'endphase' && VS.endPhase) buildEndPhase(b);
     if (G.winner === null && G.deferredTrig && G.deferredTrig.length) {
       // ターンプレイヤー（あなた）の能力が先。CPUの能力は、あなたが処理し終えてから発動する
       const row = el('div', 'vs-legacy-row vs-assist-row');
@@ -964,7 +1028,7 @@
   function onCardClick(inst, pi, zone, anchor) {
     const G = VS.G;
     if (VS.busy) return;
-    if (VS.mode === 'mulligan') { if (inst.faceUp || (pi === 0 && zone === 'hand')) openCardDetail(inst.cardId); return; }   // 引き直しを決めるまでは見るだけ
+    if (VS.mode === 'mulligan' || VS.mode === 'endphase') { if (inst.faceUp || (pi === 0 && zone === 'hand')) openCardDetail(inst.cardId); return; }   // 引き直し・エンドフェイズの選択中は見るだけ
     if (VS.mode === 'anna') {
       if (zone === 'field' && ((inst.faceUp && CARDS_BY_ID[inst.cardId].type === 'イジン') || (!inst.faceUp && ENG.arenaOn(G, pi)))) {
         const key = pi + ':' + inst.uid, info = ENG.triggerInfo(G, VS.trig);
@@ -1329,6 +1393,18 @@
 
   /* ---------------- ターン進行 / CPU ---------------- */
   function endMyTurn() {
+    const G = VS.G;
+    // エンドフェイズに選ぶ能力（蒸気機関車・三層の舎利殿）があれば、ターンを終える前に確認画面へ
+    const ch = ENG.endPhaseChoices(G, 0);
+    if (ch.length && ENG.canAct(G, 0)) {
+      VS.endPhase = { rows: ch.map(c => Object.assign({}, c, { peek: null, place: [], done: false, result: '' })) };
+      VS.mode = 'endphase';
+      render();
+      return;
+    }
+    doEndTurn();
+  }
+  function doEndTurn() {
     const G = VS.G;
     const r = ENG.endTurn(G, 0);
     if (!r.ok) { flash(r.msg); return; }
