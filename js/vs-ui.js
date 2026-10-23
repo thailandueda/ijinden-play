@@ -629,6 +629,13 @@
       return true;
     };
     const self = () => ['field', 'mana', 'grave'].map(z => ({ z, i: P[z].find(x => x.uid === e.uid) })).find(x => x.i);
+    // 冨嶽三十六景「遺業能力を持つ墓地のハイケイ1つを指定して発動できる。そのハイケイを戦場に置く」
+    if (/遺業能力を持つ墓地のハイケイ1つを指定して発動できる。そのハイケイを戦場に置く/.test(text)) {
+      P.grave.filter(g => CARDS_BY_ID[g.cardId].type === 'ハイケイ' && CARDS_BY_ID[g.cardId].legacy_ability && String(CARDS_BY_ID[g.cardId].legacy_ability).trim() !== '-').forEach(g => {
+        const nmc = CARDS_BY_ID[g.cardId].name;
+        acts.push({ label: `墓地の${nmc}を戦場に置く`, fn: () => { ok(ENG.manualMove(G, 0, g.uid, 'grave', 'field', { faceUp: true }), `墓地の${nmc}を戦場に置く`) && render(); } });
+      });
+    }
     const pickMenu = (title, list, anchor, fn) => {
       if (!list.length) { flash('対象がありません'); return; }
       showMenu(title, list.map(it => ({ label: it.label, fn: () => fn(it) })), anchor);

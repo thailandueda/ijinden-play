@@ -313,6 +313,14 @@
       if (!text) return;
       // 魔力ゾーンに表で置いたとき：「魔力ゾーンに置かれたとき」の段落だけを処理する。
       // 装備（イジン召喚時に選ぶ）・サークル（召喚時のレベル軽減）・遁甲式（ブロックステップ）・メインフェイズ／エンドフェイズの能力・常在能力は、置いた時点では何もしない
+      // あなたのハイケイを戦場に置いたとき：「戦場に置かれたとき」の段落だけを効果アシストに出す。
+      // メインフェイズ／エンドフェイズ／アタック時／破壊されたとき などの誘発や、常在能力・装備は、置いた時点では操作することがないので出さない
+      if (kind === 'field' && !onlyText && card.type === 'ハイケイ' && !G.aiPlayers.has(pi)) {
+        const paras = String(card.rule_text || '').split(/\n\s*\n/).map(p => p.split('\n').map(l => l.trim()).filter(Boolean).join('\n'))
+          .filter(p => /^(?:[^\s、。-]{1,6} - )?(?:この能力は、?)?(?:これが)?戦場に置かれた(?:とき|ときに)/.test(normTxt(p)));
+        if (!paras.length) return;
+        text = paras.join('\n');
+      }
       if (kind === 'mana' && !onlyText) {
         const paras = String(card.rule_text || '').split(/\n\s*\n/).map(p => p.split('\n').map(l => l.trim()).filter(Boolean).join('\n')).filter(p => /魔力ゾーンに置かれた(?:とき|際)|マリョク配置によって/.test(normTxt(p)));
         if (!paras.length) return;
@@ -1860,6 +1868,19 @@
         });
       }
     }
+    // あなたのメインフェイズ開始時の能力が、いま操作できるか（対象がいないなら効果アシストに出さない）
+    function mainStartActionable(G, pi, x, t) {
+      const P = G.players[pi];
+      if (/遺業能力を持つ墓地のハイケイ/.test(t)) return P.grave.some(g => cardOf(g).type === 'ハイケイ' && hasLegacy(cardOf(g)));   // 冨嶽三十六景
+      let m;
+      if ((m = t.match(/手札の「([^」]+)」カード1つを墓地に置いて発動できる/))) return P.hand.some(h => hasTrait(cardOf(h), m[1]));   // モナ・リザ
+      if (/手札のレベル(\d+)以下のイジン1体を指定して/.test(t)) { const lv = Number(t.match(/手札のレベル(\d+)以下のイジン/)[1]); return P.hand.some(h => cardOf(h).type === 'イジン' && (cardOf(h).level || 0) <= lv); }
+      if (/自分の戦場のイジン1体を指定して/.test(t)) return P.field.some(y => isIjinUp(y));   // 革命の広場
+      if (/自分の戦場のイジンをすきなだけ寝かせる/.test(t)) return P.field.some(y => isIjinUp(y) && !y.tapped);   // 安宅船
+      if (/自分の山札の上から/.test(t)) return P.deck.length > 0;   // 浪士集う長屋・落日の王宮
+      if (/自分の墓地のカード1つを/.test(t)) return P.grave.length > 0;
+      return true;
+    }
     // CPUのメインフェイズ開始時・エンドフェイズ開始時の能力
     function cpuPhaseTriggers(G, pi, which) {
       if (!G.aiPlayers.has(pi)) {   // あなたのカード：メインフェイズ開始時・エンドフェイズ開始時のドロー系だけ自動（ニュートンなど）
@@ -1872,7 +1893,16 @@
         });
         if (which === 'oppEnd') return;
         const re = which === 'mainStart' ? /自分のメインフェイズが開始したとき/ : /自分のエンドフェイズが開始したとき/;
-        G.players[pi].field.slice().forEach(x => { if (x.faceUp && !x.silenced && re.test(cardOf(x).rule_text || '')) cpuTrigger(G, pi, x, re, which); });
+        G.players[pi].field.slice().forEach(x => {
+          if (!x.faceUp || x.silenced || !re.test(cardOf(x).rule_text || '')) return;
+          const para = paraOf(cardOf(x), re);
+          if (which === 'mainStart' && para && !humanAutoPlan(G, cardOf(x), para)) {
+            // 選ぶものがある能力：対象がいて操作できるときだけ、効果アシストに出す（冨嶽三十六景・モナ・リザ・阿弥陀堂・安宅船・浪士集う長屋など）
+            if (mainStartActionable(G, pi, x, normTxt(para))) abilityFx(G, pi, cardOf(x), which, x, para);
+            return;
+          }
+          cpuTrigger(G, pi, x, re, which);
+        });
         return;
       }
       const P = G.players[pi];
