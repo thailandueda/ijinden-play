@@ -1,7 +1,7 @@
 /* アプリのバージョン（更新したら番号を上げる。ヘッダのバッジに表示し、更新履歴へリンク） */
 (function () {
   'use strict';
-  const APP_VERSION = '1.11.0';
+  const APP_VERSION = '1.12.0';
   const APP_UPDATED = '2026-10-25';
   window.APP_VERSION = APP_VERSION;
   function put() {
@@ -16,4 +16,8 @@
     h1.appendChild(a);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', put); else put();
+  // オフライン対応：Webサーバー（GitHub Pages など）で開いたときだけ Service Worker を登録（ファイルを直接開いたときは使わない）
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => { /* 使えない環境では何もしない */ }); });
+  }
 })();

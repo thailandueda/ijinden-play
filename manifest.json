@@ -1,0 +1,17 @@
+{
+  "name": "イジンデン一人回し",
+  "short_name": "イジンデン",
+  "description": "イジンデンのデッキ構築・一人回し・CPU対戦ができる非公式シミュレーター",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1a120b",
+  "theme_color": "#1a120b",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
