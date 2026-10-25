@@ -253,3 +253,74 @@
 .ep-item{ display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 8px; border-radius:6px; background: rgba(0,0,0,.25); }
 .ep-item input{ width:18px; height:18px; accent-color: var(--gold-bright); }
 .ep-item .btn{ margin-left:auto; }
+
+/* ============================================================
+   スマホ（幅600px以下）：上は細いバー、下に「手札トレイ」と「操作ボタン」を固定
+   ============================================================ */
+.log-toggle, .zone-toggle{ display:none; }
+@media (max-width: 600px){
+  :root{ --sp-bar: 58px; --sp-tray: 118px; }
+  .app-header .brand-tagline{ display:none; }
+  #vsBoard{ padding-bottom: calc(var(--sp-bar) + var(--sp-tray) + 20px); }
+
+  /* 上のバー：ターン・カウンターを1〜2行に詰めて、画面上部に固定 */
+  .board-topbar{ position: sticky; top:0; padding:6px 8px; gap:6px; margin-left:-4px; margin-right:-4px; }
+  .board-topbar .topbar-main{ gap:6px 10px; flex-wrap:wrap; align-items:center; }
+  .board-topbar .seal-stamp{ width:auto; height:auto; border-radius:8px; border-width:2px; padding:2px 8px; flex-direction:row; gap:6px; }
+  .board-topbar .seal-turn{ font-size:11px; }
+  .board-topbar .seal-phase{ font-size:13px; }
+  .board-topbar .resource-counters{ gap:4px 10px; flex-wrap:wrap; }
+  .board-topbar .counter{ flex-direction:row; align-items:baseline; gap:3px; min-width:0; }
+  .board-topbar .counter-label{ font-size:10px; }
+  .board-topbar .counter-value{ font-size:15px; }
+  .log-toggle{ display:inline-block; margin-left:auto; padding:4px 10px; order:1; }
+  .board-topbar .seal-stamp{ order:0; }
+  .board-topbar .resource-counters{ order:2; flex:1 1 100%; }
+  .board-topbar .log-panel{ display:none; }
+  .board-topbar.log-open .log-panel{ display:flex; flex:1 1 100%; min-width:0; }
+  .board-topbar.log-open .log-list{ height:140px; max-height:140px; }
+  .vs-status{ font-size:12.5px; padding:5px 8px; }
+
+  /* 操作ボタン：画面の一番下に固定（親指で押しやすく）。多いときは横スクロール */
+  .board-topbar .board-actions{
+    position:fixed; left:0; right:0; bottom:0; z-index:46; margin:0;
+    display:flex; flex-wrap:nowrap; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch;
+    padding:8px 8px calc(8px + env(safe-area-inset-bottom)); height:auto; min-height:var(--sp-bar);
+    background: rgba(24,16,10,.97); border-top:1px solid var(--line); box-shadow:0 -6px 16px rgba(0,0,0,.45);
+  }
+  .board-topbar .board-actions .btn{ flex:0 0 auto; padding:10px 14px; font-size:14px; }
+
+  /* 盤面：ゾーンは横スクロールの1列にして縦の長さを抑える */
+  .vs-zones{ gap:8px; grid-template-columns: minmax(0, 1fr); }
+  .vs-zones .zone, .vs-side{ min-width:0; }
+  .haikei-row.is-empty{ display:none; }   /* ハイケイがないときは段を出さない */
+  .vs-zones .zone{ min-height:0; padding:8px 10px; }
+  .vs-zones .zone.is-empty{ padding:6px 10px; }
+  .vs-zones .zone.is-empty .zone-cards{ min-height:0; }
+  .vs-zones .zone-cards{ flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:4px; }
+  .vs-zones .zone-cards > *{ flex:0 0 auto; }
+  .vs-zones .zone-title{ margin-bottom:6px; font-size:14px; }
+  .vs-side{ padding:10px; }
+
+  /* 墓地は畳んでおき、見出しをタップで開く */
+  .zone-toggle{ display:inline; margin-left:8px; font-size:11px; color:#bba98c; font-weight:500; }
+  .zone-grave .zone-title{ cursor:pointer; margin-bottom:0; }
+  .zone-grave:not(.is-open) .zone-cards{ display:none; }
+  .zone-grave.is-open .zone-title{ margin-bottom:6px; }
+  /* CPUの手札は枚数だけ */
+  .vs-cpu .zone-hand .zone-cards{ display:none; }
+  .vs-cpu .zone-hand .zone-title{ margin-bottom:0; }
+
+  /* あなたの手札：操作ボタンの上に固定したトレイ（横スクロール） */
+  .vs-me .zone-hand{
+    position:fixed; left:0; right:0; bottom:var(--sp-bar); z-index:45; margin:0; border-radius:12px 12px 0 0;
+    height:var(--sp-tray); padding:6px 10px 6px; background: rgba(36,25,16,.97); border:1px solid var(--line); border-bottom:none;
+    box-shadow:0 -6px 16px rgba(0,0,0,.4);
+  }
+  .vs-me .zone-hand .zone-title{ font-size:12.5px; margin-bottom:4px; }
+  .vs-me .zone-hand .zone-cards{ min-height:0; padding-top:8px; }
+  .vs-me .zone-hand .mini-card{ width:104px; min-height:62px; }
+
+  /* 左下の表示は、スマホでは手札トレイのすぐ上に出す */
+  .vs-feed{ top:auto; bottom: calc(var(--sp-bar) + var(--sp-tray) + 8px); }
+}

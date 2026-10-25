@@ -8,7 +8,7 @@
   if (typeof IjindenEngine === 'undefined') { console.error('vs-engine.js が読み込まれていません'); return; }
 
   const ENG = IjindenEngine.create(CARDS_BY_ID);
-  const VS = { G: null, mode: 'normal', selAtk: new Set(), selBlocker: null, assign: {}, busy: false, flashMsg: '', legacy: [], annaSel: new Set(), trig: null, afterAnna: null, afterLegacy: null, annaPrev: 'normal', assist: [], assistTurn: 0, pumping: false };
+  const VS = { G: null, mode: 'normal', selAtk: new Set(), selBlocker: null, assign: {}, busy: false, flashMsg: '', legacy: [], annaSel: new Set(), trig: null, afterAnna: null, afterLegacy: null, annaPrev: 'normal', openZones: new Set(), logOpen: false, assist: [], assistTurn: 0, pumping: false };
   const $ = id => document.getElementById(id);
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -582,17 +582,23 @@
       btn('対戦終了', 'btn-danger', endGame);
     }
     main.appendChild(act);
+    // スマホ：ログは「ログ」ボタンで開閉（PCでは常に表示）
+    const lt = el('button', 'btn btn-ghost btn-sm log-toggle', VS.logOpen ? '📜 ログを閉じる' : '📜 ログ');
+    lt.addEventListener('click', () => { VS.logOpen = !VS.logOpen; render(); });
+    main.appendChild(lt);
+    if (VS.logOpen) bar.classList.add('log-open');
     bar.appendChild(main);
     bar.appendChild(buildLog());
     // 固定バーの1行案内（いま何をする場面か）。タップで詳しい案内の位置へ
     const st = statusLine(G);
-    const line = el('button', 'vs-status' + (st.warn ? ' is-warn' : ''), st.text);
+    const line = el('button', 'vs-status' + (st.warn ? ' is-warn' : ''), isNarrow() ? st.text.replace(/クリック/g, 'タップ') : st.text);
     line.type = 'button';
     line.title = '詳しい案内を表示';
     line.addEventListener('click', () => { const bn = document.querySelector('#vsBoard .vs-banner'); if (bn) bn.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
     bar.appendChild(line);
     return bar;
   }
+  const isNarrow = () => !!(window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
   function statusLine(G) {
     if (VS.flashMsg) return { text: '⚠ ' + VS.flashMsg, warn: true };
     if (G.winner !== null) return { text: G.winner === 0 ? '🎉 あなたの勝利！' : 'CPUの勝利…' };
@@ -891,7 +897,8 @@
       if (d1 <= 3) lines.push(`★ CPUの山札は残り${d1}枚です。CPUのターンが始まるときに山札が0枚ならあなたの勝ちです。`);
     }
     if (VS.flashMsg) lines.push('⚠ ' + VS.flashMsg);
-    lines.forEach((t, i) => { const p = el('div', i === 0 ? 'vs-banner-main' : 'vs-banner-sub', t); b.appendChild(p); });
+    const touch = isNarrow();   // スマホでは「クリック」を「タップ」と案内する
+    lines.forEach((t, i) => { const p = el('div', i === 0 ? 'vs-banner-main' : 'vs-banner-sub', touch ? String(t).replace(/クリック/g, 'タップ') : t); b.appendChild(p); });
     if (G.winner === null && VS.mode === 'block' && G.battle) {
       // 相手のアタッカーの詳細を確認するボタン（カードのクリックはブロック指定に使うため）
       const atkP = G.players[G.current];
@@ -963,9 +970,14 @@
     const order = pi === 1 ? [['墓地', 'grave'], ['手札', 'hand'], ['戦場', 'field'], ['魔力ゾーン', 'mana']]
       : [['戦場', 'field'], ['魔力ゾーン', 'mana'], ['墓地', 'grave'], ['手札', 'hand']];
     order.forEach(([label, key]) => {
-      const z = el('div', 'zone');
+      const zkey = `${pi}-${key}`;
+      const z = el('div', `zone zone-${key}` + (P[key].length ? '' : ' is-empty') + (VS.openZones.has(zkey) ? ' is-open' : ''));
       const t = el('h3', 'zone-title', label);
       t.appendChild(el('span', 'zone-count', `(${P[key].length})`));
+      if (key === 'grave') {   // スマホでは墓地を畳んでおき、見出しをタップで開閉
+        t.appendChild(el('span', 'zone-toggle', VS.openZones.has(zkey) ? '▾ 閉じる' : '▸ 開く'));
+        t.addEventListener('click', () => { if (VS.openZones.has(zkey)) VS.openZones.delete(zkey); else VS.openZones.add(zkey); render(); });
+      }
       z.appendChild(t);
       if (key === 'mana' && pi === 0) z.appendChild(buildManaSummary(el('div', 'mana-summary'), P.mana, ENG.manaInfo(P)));
       if (key === 'field') {
