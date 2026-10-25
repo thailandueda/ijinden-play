@@ -1,7 +1,7 @@
 /* アプリのバージョン（更新したら番号を上げる。ヘッダのバッジに表示し、更新履歴へリンク） */
 (function () {
   'use strict';
-  const APP_VERSION = '1.10.0';
+  const APP_VERSION = '1.11.0';
   const APP_UPDATED = '2026-10-25';
   window.APP_VERSION = APP_VERSION;
   function put() {

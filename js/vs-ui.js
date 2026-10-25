@@ -241,6 +241,9 @@
   /* ---------------- ポップアップメニュー ---------------- */
   const menuEl = el('div', 'action-menu');
   document.body.appendChild(menuEl);
+  // スマホではメニューを画面下から出すパネル（ボトムシート）にする。後ろを暗くする幕（メニューのすぐ後ろに置き、CSSで開閉）
+  const menuBackdrop = el('div', 'menu-backdrop');
+  document.body.appendChild(menuBackdrop);
   function closeMenu() { menuEl.classList.remove('is-open'); menuEl.innerHTML = ''; }
   document.addEventListener('click', e => {
     if (!e.target.isConnected) return;   // メニューの項目から次のメニューを開いたとき（押したボタンはもう消えている）は閉じない
@@ -261,6 +264,12 @@
       b.addEventListener('click', () => { closeMenu(); it.fn(); });
       menuEl.appendChild(b);
     });
+    if (isNarrow()) {   // スマホ：パネルの一番下に「閉じる」
+      menuEl.appendChild(el('div', 'am-divider'));
+      const x = el('button', 'am-close', '閉じる');
+      x.addEventListener('click', () => closeMenu());
+      menuEl.appendChild(x);
+    }
     placePopup(menuEl, anchor);   // カードの上に出す（入らなければ下）
   }
 
@@ -1059,6 +1068,15 @@
       }
     }
     if (!(pi === 1 && zone === 'hand')) e.addEventListener('click', () => onCardClick(inst, pi, zone, e));
+    // 長押し（0.5秒）でカード詳細（スマホ）。見えないカード（CPUの手札・CPUの裏向きのカード）は開かない
+    if (pi === 0 || (inst.faceUp && zone !== 'hand') || zone === 'grave') {
+      let lp = null, fired = false;
+      const stop = () => { clearTimeout(lp); lp = null; };
+      e.addEventListener('touchstart', () => { fired = false; stop(); lp = setTimeout(() => { fired = true; closeMenu(); openCardDetail(inst.cardId); }, 500); }, { passive: true });
+      ['touchend', 'touchmove', 'touchcancel'].forEach(t => e.addEventListener(t, stop, { passive: true }));
+      e.addEventListener('click', ev => { if (fired) { fired = false; ev.stopImmediatePropagation(); ev.preventDefault(); } }, true);
+      e.addEventListener('contextmenu', ev => { if (isNarrow()) ev.preventDefault(); });
+    }
     e.dataset.uid = inst.uid;
     // 装備されているカードは、イジンの下に少し重ねて表示（装備テキストだけが有効。クリックで詳細・外す）
     if (zone === 'field' && inst.faceUp && inst.equips && inst.equips.length) {
