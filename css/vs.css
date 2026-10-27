@@ -348,3 +348,13 @@
   @keyframes feedIn{ from{ opacity:0; transform:translateY(-10px); } to{ opacity:1; transform:none; } }
 }
 @keyframes sheetUp{ from{ transform:translateY(30px); opacity:.6; } to{ transform:none; opacity:1; } }
+
+/* ===== 新しくゾーンに入ったカードの印（戦場「登場」・墓地「墓地へ」・魔力ゾーン「配置」） ===== */
+.mini-card-new{ position:absolute; top:-8px; right:-4px; font-size:9px; font-weight:800; color:#1a1508; padding:1px 5px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.4); pointer-events:none; z-index:2; }
+.mini-card.is-new-field{ box-shadow:0 0 0 2px rgba(255,212,96,.85), 0 0 10px rgba(255,212,96,.45); }
+.mini-card.is-new-field .mini-card-new{ background:#ffd460; }
+.mini-card.is-new-grave{ box-shadow:0 0 0 2px rgba(190,180,165,.85); }
+.mini-card.is-new-grave .mini-card-new{ background:#bdb3a3; }
+.mini-card.is-new-mana{ box-shadow:0 0 0 2px rgba(110,190,120,.85); }
+.mini-card.is-new-mana .mini-card-new{ background:#7fcf8c; }
+.mini-card.is-tapped .mini-card-new{ transform: rotate(-90deg); top:auto; bottom:-6px; right:auto; left:-14px; }

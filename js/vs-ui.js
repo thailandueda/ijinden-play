@@ -388,6 +388,21 @@
     }
     return null;
   }
+  /* 新しくゾーンに入ったカードに印を付ける（戦場「登場」・墓地「墓地へ」・魔力ゾーン「配置」）。
+     CPUのターンに入ったものは、次のあなたのターンが終わるまで。あなたのターンに入ったものは、そのターンの間だけ */
+  const ARRIVE_ZONES = ['field', 'grave', 'mana'];
+  function trackArrivals(G) {
+    const now = new Map();
+    G.players.forEach((P, pi) => ARRIVE_ZONES.forEach(z => now.set(`${pi}:${z}`, new Set(P[z].map(x => x.uid)))));
+    if (VS.arriveG !== G) { VS.arriveG = G; VS.zoneSeen = now; VS.arrived = new Map(); return; }   // 対戦の最初は印を付けない
+    now.forEach((set, key) => {
+      const prev = VS.zoneSeen.get(key) || new Set(), z = key.split(':')[1];
+      set.forEach(uid => { if (!prev.has(uid)) VS.arrived.set(`${z}:${uid}`, { actor: G.current, turn: G.turn }); });
+    });
+    VS.zoneSeen = now;
+    VS.arrived.forEach((a, k) => { if (!(a.actor === 1 ? G.turn <= a.turn + 1 : G.turn === a.turn)) VS.arrived.delete(k); });
+  }
+  const ARRIVE_LABEL = { field: '登場', grave: '墓地へ', mana: '配置' };
   function reportDepartures(G) {
     const prev = VS.snap, now = fieldSnap(G);
     if (prev && VS.snapG === G && G.winner === null && fxShow('destroy')) {
@@ -514,6 +529,7 @@
     VS.destroyedNow = new Set(); VS.explainedBy = new Set();
     if (G.fx && G.fx.length) playFx(G, G.fx.splice(0));
     reportDepartures(G);
+    trackArrivals(G);
     const root = $('vsBoard');
     // 再描画でログ欄が作り直されるので、スクロール位置を覚えておく
     const old = root.querySelector('.log-list');
@@ -1050,6 +1066,10 @@
     if (zone === 'field' && inst.faceUp && card.type === 'イジン' && inst.placedTurn === G.turn) { e.classList.add('has-new'); e.appendChild(el('span', 'mini-card-new', 'New')); }
     // 新しく引いたカード（自分のターンを終えるまで表示）
     if (zone === 'hand' && pi === 0 && inst.drawnSeq && inst.drawnSeq > (G.players[0].seenSeq || 0)) { e.classList.add('is-drawn'); e.appendChild(el('span', 'mini-card-drawn', '引いた')); }
+    if (ARRIVE_LABEL[zone] && VS.arrived && VS.arrived.has(`${zone}:${inst.uid}`)) {   // 新しく入ったカードの印
+      e.classList.add('is-new', 'is-new-' + zone);
+      e.appendChild(el('span', 'mini-card-new', ARRIVE_LABEL[zone]));
+    }
 
     // バトル表示・選択状態
     const tag = (text, extra) => { const t = el('span', 'mini-card-tag ' + (extra || ''), text); e.appendChild(t); };
