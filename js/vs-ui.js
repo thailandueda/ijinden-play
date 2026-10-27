@@ -376,7 +376,7 @@
       const m = String(L[i].m);
       if (!m.includes(name)) continue;
       const pre = m.match(/^\s*([^：\s]+?)(?:（[^）]*）)?：/);
-      if (pre && !/^(効果|あなた|CPU|【手動】|【バトル】)/.test(pre[1]) && pre[1] !== name) return pre[1];
+      if (pre && !/^(効果|あなた|CPU|【手動】|【バトル】)/.test(pre[1]) && pre[1] !== name) return pre[1].replace(/の能力(?:を解決)?$/, '');
       if (/^【手動】/.test(m.trim())) return '__manual';
       for (let j = i - 1; j >= Math.max(from - 1, 0); j--) {
         const a = String(L[j].m).match(/^\s*(.+?)の能力(?:をCPUが)?(?:を)?(?:自動処理|：)/);
@@ -398,6 +398,7 @@
         const dest = P.hand.some(x => x.uid === uid) ? '手札に戻りました' : inMana ? (inMana.faceUp ? '魔力ゾーンに置かれました' : '裏向きで魔力ゾーンに置かれました')
           : P.grave.some(x => x.uid === uid) ? '墓地に置かれました' : G.players[1 - v.pi].field.some(x => x.uid === uid) ? '相手の戦場に移りました' : '山札に戻りました';
         const why = reasonFor(G, v.guard ? 'ガーディアン' : v.real);
+        if (why && VS.explainedBy.has(why)) return;   // すぐ前の能力の表示で説明済み
         pushFeedLater({ pi: v.pi, title: `${whose(v.pi)}${v.name}が戦場を離れました`, tag: '戦場から', lines: [`理由：${why === '__manual' ? '手動で移動' : why ? why + 'の効果' : '効果（詳しくはログ）'}`, '→ ' + dest] });
       });
     }
@@ -413,6 +414,8 @@
     return `${whose(f.pi)}${f.name}：${f.text}`;
   }
   const chainable = f => (f.type === 'ability' && f.auto) || (f.type === 'draw' && !f.turn);
+  // 能力の演出に「〜を手札に戻す」など結果が書いてあるものは、戦場を離れた表示を重ねて出さない
+  const noteExplained = f => { if (f.type === 'ability' && f.auto && f.text && /手札に戻す|魔力ゾーンに置く|山札/.test(f.text)) VS.explainedBy.add(f.name); };
   function playFx(G, list) {
     const legacy = [];
     let chain = [];
@@ -446,6 +449,7 @@
       }
     }
     list.forEach(f => {
+      noteExplained(f);
       if (chainable(f)) { if (chain.length && chain[chain.length - 1].pi !== f.pi) flushChain(); chain.push(f); return; }   // プレイヤーが変わったら別の1件に
       flushChain();
       if (f.type === 'draw') {
@@ -507,7 +511,7 @@
     closeMenu();
     if (G.winner !== null && !G.recorded) { G.recorded = true; recordResult(G); }   // 決着したら戦績に1回だけ記録
     if (VS.assistTurn !== G.turn) { VS.assist = []; VS.assistTurn = G.turn; }   // ターンが変わったら効果アシストを片付ける
-    VS.destroyedNow = new Set();
+    VS.destroyedNow = new Set(); VS.explainedBy = new Set();
     if (G.fx && G.fx.length) playFx(G, G.fx.splice(0));
     reportDepartures(G);
     const root = $('vsBoard');

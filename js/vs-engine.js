@@ -625,10 +625,15 @@
         const annas = G.players[pi].field.filter(isAnna);
         if (!annas.length) return;
         const c = cardOf(annas[0]);
-        G.fx.push({ type: 'ability', pi, kind: 'trigger', cardId: c.id, name: c.name, text: '', uid: null });
+        const entry = { type: 'ability', pi, kind: 'trigger', cardId: c.id, name: c.name, text: '', uid: null };
+        G.fx.push(entry);
         const t = { kind: 'anna', pi, uids: annas.map(a => a.uid) };
         log(G, `　${c.name}${annas.length > 1 ? `×${annas.length}` : ''}の能力が誘発しました：${annaDetail(G, t)}`);
-        if (G.aiPlayers.has(pi)) aiAnna(G, t);
+        if (G.aiPlayers.has(pi)) {   // CPU：その場で処理して、何を手札に戻したかを演出に載せる（バトルより前に表示される）
+          const r = aiAnna(G, t);
+          entry.auto = true;
+          entry.text = r && r.names && r.names.length ? `${r.names.join('、')}を手札に戻す` : '（戻せるイジンがいないので発動しませんでした）';
+        }
         else {
           const ex = G.triggers.find(x => x.pi === pi);   // 同じ持ち主の未処理の誘発があれば1つにまとめる
           if (ex) t.uids.forEach(u => { if (!ex.uids.includes(u)) ex.uids.push(u); });
@@ -662,7 +667,7 @@
         names.push(`${nm(G, tg.pi)}の${wasGuard && G.aiPlayers.has(tg.pi) ? 'ガーディアン' : cardOf(inst).name}`);
       });
       log(G, names.length ? `アンナ・パブロワの能力：${names.join('、')}を手札に戻しました` : 'アンナ・パブロワの能力は発動しませんでした');
-      return { ok: true };
+      return { ok: true, names };
     }
     function aiAnna(G, t) {
       const info = triggerInfo(G, t);
@@ -670,7 +675,7 @@
       const foes = info.targets.filter(x => x.pi !== t.pi)
         .map(x => G.players[x.pi].field.find(i => i.uid === x.uid))
         .sort((a, b) => powerOf(b, G) - powerOf(a, G));
-      resolveAnna(G, t, foes.slice(0, info.n).map(i => ({ pi: 1 - t.pi, uid: i.uid })));
+      return resolveAnna(G, t, foes.slice(0, info.n).map(i => ({ pi: 1 - t.pi, uid: i.uid })));
     }
 
     function canAct(G, pi) { return G.winner === null && G.current === pi && G.phase === 'main' && !G.battle; }
